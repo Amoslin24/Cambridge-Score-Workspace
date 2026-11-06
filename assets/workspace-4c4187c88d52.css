@@ -17,3 +17,32 @@
  .modal input[type=file] { width:100%; }
  .modal fieldset { margin-inline:0; padding:10px; }
 }
+.teacher-scope{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px}.teacher-analysis label{display:grid;gap:8px;margin:12px 0}.teacher-results [aria-label="统一 SET 成绩工作台"]>label,.teacher-results [aria-label="统一 SET 成绩工作台"]>.form-note{display:none}.teacher-analysis select{max-width:100%;min-width:0}.teacher-analysis .card{margin-bottom:16px}
+.teacher-analysis:not(.show-student-rows) .teacher-results table {display:none}
+.teacher-analysis .teacher-scope {grid-template-columns:1fr}
+.teacher-analysis>.form-note {margin:12px 0;padding:12px}
+.teacher-analysis .card>details {margin-top:12px}
+.teacher-analysis>details {padding:12px;border:1px solid #dce3d8;border-radius:8px;margin:12px 0}
+.student-radar select {width:100%;min-width:0}
+.teacher-matrix table {display:table!important;width:100%;font-size:13px}
+.teacher-matrix th,.teacher-matrix td {padding:10px;white-space:nowrap}
+.comparison-bar {display:grid;grid-template-columns:minmax(160px,1fr) 2fr;gap:12px;margin:8px 0}
+.bar-track {background:#e8eee7;border-radius:4px;overflow:hidden}.chart-mode {display:flex;gap:10px;margin:12px 0}
+@media(max-width:480px){.comparison-bar{grid-template-columns:1fr}}
+.workspace-settings {margin-bottom:12px}
+.workspace-storage-note {font-size:11px;color:#607164;margin:8px 0}
+.demo-banner:empty {display:none!important}
+.teacher-picker {display:grid;grid-template-columns:minmax(140px,1fr) minmax(200px,3fr);align-items:end;gap:12px;margin:12px 0}
+.teacher-picker>.teacher-scope {display:contents}
+.teacher-picker>details,.teacher-picker>[role="status"] {grid-column:1/-1}
+.teacher-picker label {margin:0!important;padding:0!important;gap:5px!important}
+.teacher-analysis .class-view-nav {display:flex;gap:8px;margin:12px 0}
+.teacher-analysis .class-view-nav button {padding:8px 14px;border-radius:7px;min-height:0}
+.teacher-analysis>.form-note {padding:8px 10px;margin:10px 0;font-size:12px}
+.teacher-results>[aria-label="统一 SET 成绩工作台"]>h2 {display:none}
+@media(max-width:520px){.teacher-picker{grid-template-columns:1fr}}
+.teacher-results [aria-label="统一 SET 成绩工作台"]>h2 {display:none}
+/* Production omits the inherited demo roster; keep its old test-only banner out of the teacher layout too. */
+.demo-banner {display:none!important}
+.teacher-picker>details {padding:0!important;margin:0!important;border:0!important;background:none!important}
+.teacher-analysis>.form-note details {padding:0!important;margin:4px 0 0!important;border:0!important;background:none!important}
