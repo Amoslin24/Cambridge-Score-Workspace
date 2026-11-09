@@ -137,7 +137,7 @@ function shell(body, { wide = false } = {}) {
   const title = workspace.profile?.customTitle || workspace.profile?.teacherName || "";
   app.replaceChildren(
     h("header", { class: "top" },
-      h("a", { href: "#/" }, "先看什么"),
+      h("a", { class: "brand", href: "#/" }, "先看什么"),
       h("nav", { class: "top-links" }, h("a", { href: "#/entry" }, "记分"), h("a", { href: "#/students" }, "名单"), h("a", { href: "#/backup" }, "备份")),
       title ? h("span", {}, title) : null,
     ),
@@ -179,11 +179,15 @@ function renderHome() {
     h("p", { class: "lead" }, "先选班。下面最多三条：哪一项这次偏低、涉及谁、分数是什么。点进去再看趋势。"),
     names.length ? h("div", {}, h("label", { for: "home-class" }, "哪个班"), h("select", { id: "home-class", value: selected, onChange: (event) => { workspace.prefs = { ...(workspace.prefs || {}), setName: event.target.value, classAll: event.target.value === "" }; persist(); render(); } }, [h("option", { value: "" }, "全部学生"), ...names.map((name) => h("option", { value: name }, name))])) : null,
     rosterMessage ? h("div", { class: "note" }, rosterMessage) : null,
-    attention.items.length ? h("div", { class: "exam-list section" }, attention.items.map((item) => h("a", { href: attentionHref(item, selected) },
-      h("strong", {}, `${item.repeated ? "再次出现" : "一次信号"} · ${item.label}`),
-      h("div", {}, evidenceLine(item)),
+    attention.items.length ? h("div", { class: "exam-list attention" }, attention.items.map((item) => h("a", { href: attentionHref(item, selected) },
+      h("div", { class: "card-top" },
+        h("p", { class: "headline" }, `${item.label}是 ${formatNumber(item.percent)}%`),
+        h("span", { class: "pill" }, item.repeated ? "再次出现" : "一次信号"),
+      ),
+      rateBar(item.percent),
+      h("div", { class: "rate-label num" }, evidenceLine(item)),
       h("div", { class: "meta" }, item.repeated ? `同一级别的练习里，这项已经出现 ${item.hitCount} 次。` : "目前只在一场里达到这条线。"),
-      h("div", {}, item.affected.length ? `不高于班均：${item.affected.map((student) => student.name).join("、")}` : `有分的 ${item.n} 人正确率一样。`),
+      h("div", { class: "meta" }, item.affected.length ? `不高于班均：${item.affected.map((student) => student.name).join("、")}` : `有分的 ${item.n} 人正确率一样。`),
     ))) : h("div", { class: "card" }, h("p", {}, "现在没有达到「偏低」标准的部分。人数不够，或各项正确率差不多时，这里不会硬指一项。")),
     h("details", { class: "section" }, h("summary", {}, "这些判断用的规则"), RULE_LINES.map((line) => h("p", { class: "hint" }, line))),
     h("div", { class: "btn-row section" },
@@ -193,6 +197,11 @@ function renderHome() {
       buttonLink("#/results", "btn-quiet", "各场成绩"),
     ),
   ));
+}
+
+function rateBar(percent) {
+  const width = Math.max(0, Math.min(100, Number(percent) || 0));
+  return h("div", { class: "rate", role: "img", "aria-label": `${formatNumber(percent)}%` }, h("span", { style: `width:${width}%` }));
 }
 
 function attentionHref(item, className) {
@@ -646,18 +655,15 @@ function renderAttention() {
     h("h1", {}, item ? item.label : "这一项"),
     h("p", { class: "takeaway" }, item ? (item.repeated ? `再次出现。${evidenceLine(item)}` : `一次信号，还不是稳定结论。${evidenceLine(item)}`) : "这一项现在没有达到偏低的标准。"),
     h("p", { class: "hint" }, "分数不能说明原因。下面只列出谁的正确率不高于班均，以及各场的分母和人数。"),
-    h("div", { class: "scroll" }, h("table", {},
-      h("thead", {}, h("tr", {}, h("th", {}, "日期"), h("th", {}, "试卷"), h("th", {}, "正确率"), h("th", {}, "有分"), h("th", {}, "空着"), h("th", {}, "缺考"), h("th", {}, "这次"))),
-      h("tbody", {}, rows.map((row) => h("tr", { class: row.signal ? "weak" : "" },
-        h("td", {}, formatDate(row.sitting.date)),
-        h("td", {}, row.sitting.paper || "未写名称"),
-        h("td", {}, row.part.n ? `${formatNumber(row.part.percent)}%（${formatNumber(row.part.rawAverage)}/${formatNumber(row.part.max)}）` : "—"),
-        h("td", {}, String(row.part.n)),
-        h("td", {}, String(row.part.blank)),
-        h("td", {}, String(row.part.absent)),
-        h("td", {}, row.signal ? (rows.filter((entry) => entry.signal).length > 1 ? "再次出现" : "一次信号") : "未拉开"),
-      ))),
-    )),
+    h("div", { class: "panel" }, rows.map((row) => h("div", { class: row.signal ? "session weak" : "session" },
+      h("div", { class: "session-top" },
+        h("strong", {}, `${formatDate(row.sitting.date)} · ${row.sitting.paper || "未写名称"}`),
+        h("span", { class: "pill" }, row.signal ? (rows.filter((entry) => entry.signal).length > 1 ? "再次出现" : "一次信号") : "未拉开"),
+      ),
+      row.part.n ? rateBar(row.part.percent) : null,
+      h("p", { class: "num" }, row.part.n ? `${formatNumber(row.part.percent)}%（${formatNumber(row.part.rawAverage)}/${formatNumber(row.part.max)}）` : "没有可用分数"),
+      h("p", { class: "meta" }, `${row.part.n} 人有分，${row.part.blank} 人空着，${row.part.absent} 人缺考`),
+    ))),
     h("h2", { class: "section" }, "不高于班均的学生"),
     item?.affected?.length ? h("div", { class: "exam-list" }, item.affected.map((student) => h("a", { href: `#/student/${student.studentId}` }, h("strong", {}, student.name), h("div", {}, `${formatNumber(student.percent)}%（${formatNumber(student.raw)}/${formatNumber(item.max)}）`)))) : h("p", {}, "有分的人差不多，不单列谁。"),
     compared?.ok ? h("section", { class: "section card" },
@@ -967,15 +973,21 @@ function chart(series, selection) {
   const y = (value) => pad.top + ((domain[1] - value) / (domain[1] - domain[0])) * innerHeight;
   const points = series.map((point, index) => `${x(index)},${y(point.value)}`).join(" ");
   const label = unit === "shield" ? "盾" : unit === "percent" ? "正确率" : "标准分";
+  const grid = [0, 0.5, 1].map((step) => {
+    const yy = pad.top + innerHeight * (1 - step);
+    const value = domain[0] + (domain[1] - domain[0]) * step;
+    return h("g", {},
+      h("line", { x1: pad.left, x2: width - pad.right, y1: yy, y2: yy, stroke: "#e7e2da", "stroke-width": "1" }),
+      h("text", { x: "8", y: yy + 4, fill: "#8a847b", "font-size": "12" }, formatNumber(value)),
+    );
+  });
   return h("svg", { class: "chart", viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `${label}折线` },
-    h("line", { x1: pad.left, y1: pad.top, x2: pad.left, y2: height - pad.bottom, stroke: "#2c332e" }),
-    h("line", { x1: pad.left, y1: height - pad.bottom, x2: width - pad.right, y2: height - pad.bottom, stroke: "#2c332e" }),
-    h("text", { x: "4", y: pad.top + 8, "font-size": "14" }, String(domain[1])),
-    h("text", { x: "4", y: height - pad.bottom, "font-size": "14" }, String(domain[0])),
-    series.length > 1 ? h("polyline", { fill: "none", stroke: "#0c6b4c", "stroke-width": "3", points }) : null,
+    grid,
+    series.length > 1 ? h("polyline", { fill: "none", stroke: "#1f6f64", "stroke-width": "2.5", points }) : null,
     series.map((point, index) => h("g", {},
-      h("circle", { cx: x(index), cy: y(point.value), r: "5", fill: "#0c6b4c" }),
-      h("text", { x: x(index), y: height - 14, "text-anchor": index === 0 ? "start" : index === series.length - 1 ? "end" : "middle", "font-size": "14" }, formatDate(point.date).replace("年", "/")),
+      h("circle", { cx: x(index), cy: y(point.value), r: "5", fill: "#1f6f64" }),
+      h("text", { x: x(index), y: Math.max(16, y(point.value) - 12), "text-anchor": "middle", fill: "#1f6f64", "font-size": "13" }, unit === "percent" ? `${formatNumber(point.value)}%` : formatNumber(point.value)),
+      h("text", { x: x(index), y: height - 14, "text-anchor": index === 0 ? "start" : index === series.length - 1 ? "end" : "middle", fill: "#5e5a54", "font-size": "13" }, formatDate(point.date).replace("年", "/")),
     )),
   );
 }
