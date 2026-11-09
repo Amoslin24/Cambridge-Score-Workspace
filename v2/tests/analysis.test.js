@@ -24,13 +24,16 @@ test("class takeaway uses real averages and names the weakest skill", () => {
     result("4", "b", "s2", { reading: 130, writing: 100, listening: 110, speaking: 100 }),
   ];
   const report = classReport(sittings[1], results, sittings[0], results);
-  assert.equal(report.sentence, "阅读比上次提高 10 分，写作、口语最弱（班均 100 分）。");
+  assert.equal(report.sentence.includes("最弱"), false);
+  assert.match(report.sentence, /阅读比上场高 10 分/);
+  assert.match(report.sentence, /不是能力结论/);
+  assert.match(report.sentence, /不按卷面正确率排名/);
   const reading = report.deltas.find((skill) => skill.id === "reading");
   assert.equal(reading.delta, 10);
 });
 
 test("a single entered skill is not called the weakest", () => {
-  assert.equal(takeaway({ skills: [{ id: "reading", label: "阅读", average: 20, unit: "percent", rawAverage: 10, max: 30, n: 1 }], parts: [], deltas: [] }), "这次记下了阅读。");
+  assert.equal(takeaway({ skills: [{ id: "reading", label: "阅读", average: 20, unit: "percent", rawAverage: 10, max: 30, n: 1 }], parts: [], deltas: [] }), "这次只记下了阅读，一项不能比较高低。");
 });
 
 test("part analysis highlights the lowest percent, not the smallest raw mark", () => {
@@ -40,7 +43,8 @@ test("part analysis highlights the lowest percent, not the smallest raw mark", (
     result("2", "p", "s2", { writing_task_totals_v1: 1, r_p1: 1, r_p2: 7 }),
   ];
   const report = classReport(sitting, results, null, results);
-  assert.match(report.sentence, /阅读第1部分最低（班均 1\/6）/);
+  assert.equal(report.sentence.includes("最低"), false);
+  assert.match(report.sentence, /不足 3 人/);
   const first = report.parts.find((part) => part.id === "r_p1");
   const second = report.parts.find((part) => part.id === "r_p2");
   assert.ok(first.percent < second.percent);
@@ -60,7 +64,9 @@ test("student sentence compares that student with their own previous exam", () =
       { date: "2026-11-09", value: 100, unit: "scale" },
     ],
   });
-  assert.equal(sentence, "阅读比上次提高 10 分，这次写作最弱。");
+  assert.match(sentence, /阅读比上场高 10 分/);
+  assert.match(sentence, /不是能力结论/);
+  assert.equal(sentence.includes("最弱"), false);
 });
 
 test("imported paper names are not labeled with the level twice", () => {

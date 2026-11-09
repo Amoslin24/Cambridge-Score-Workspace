@@ -188,7 +188,7 @@ function sameScores(left, right) {
 }
 
 export function emptyWorkspace() {
-  return { schemaVersion: 2, students: [], sittings: [], results: [], prefs: {}, profile: null };
+  return { schemaVersion: 2, students: [], sittings: [], results: [], followUps: [], prefs: {}, profile: null };
 }
 
 export function mergeConverted(workspace, converted) {
@@ -197,6 +197,7 @@ export function mergeConverted(workspace, converted) {
     students: workspace.students.map((student) => ({ ...student })),
     sittings: workspace.sittings.map((sitting) => ({ ...sitting })),
     results: workspace.results.map((result) => ({ ...result })),
+    followUps: [...(workspace.followUps || [])],
     prefs: { ...(workspace.prefs || {}) },
     profile: workspace.profile || converted.profile || null,
   };
@@ -245,6 +246,9 @@ export function mergeConverted(workspace, converted) {
     next.results.push({ ...incoming, id: next.results.some((result) => result.id === incoming.id) ? crypto.randomUUID() : incoming.id, sittingId, studentId });
     summary.resultsAdded += 1;
   }
+  for (const item of converted.followUps || []) {
+    if (item && !next.followUps.some((existing) => existing.id === item.id)) next.followUps.push(item);
+  }
   return { workspace: next, summary };
 }
 
@@ -279,8 +283,27 @@ export function workspaceFromV2(data) {
           recordMeta: result.recordMeta && typeof result.recordMeta === "object" ? result.recordMeta : null,
         }))
       : [],
+    followUps: Array.isArray(source.followUps) ? source.followUps.map(copyFollowUp).filter(Boolean) : [],
     prefs: source.prefs && typeof source.prefs === "object" ? { ...source.prefs } : {},
     profile: source.profile && typeof source.profile === "object" ? { ...source.profile } : null,
+  };
+}
+
+function copyFollowUp(item) {
+  if (!item || typeof item !== "object") return null;
+  const observation = text(item.observation, 80);
+  const nextCheck = text(item.nextCheck, 80);
+  if (!observation && !nextCheck) return null;
+  return {
+    id: text(item.id, 150) || crypto.randomUUID(),
+    className: text(item.className, 80),
+    level: text(item.level, 20),
+    kind: text(item.kind, 20) || "practice",
+    partId: text(item.partId, 80),
+    label: text(item.label, 80),
+    observation,
+    nextCheck,
+    createdAt: text(item.createdAt, 40),
   };
 }
 

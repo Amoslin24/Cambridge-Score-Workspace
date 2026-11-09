@@ -1,3 +1,4 @@
+import { judgeItems } from "./attention.js";
 import { calculate, entryColumns, inferMode, levelLabel, SKILL_LABEL } from "./scoring.js";
 
 export function formatNumber(value) {
@@ -140,42 +141,24 @@ export function compareSkills(current, previous) {
     .filter(Boolean);
 }
 
-export function takeaway({ skills, parts, deltas }) {
-  const sentences = [];
-  const moves = (deltas || []).filter((item) => Number.isFinite(item.delta));
-  if (moves.length) {
-    const ranked = [...moves].sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-    const biggest = ranked[0];
-    const flat = moves.every((item) => Math.abs(item.delta) < 0.05);
-    if (flat) sentences.push("各科和上次持平");
-    else if (biggest) sentences.push(moveClause(biggest, biggest.delta));
+export function takeaway({ skills, parts, deltas, kind = "practice" }) {
+  const judgement = judgeItems((parts || []).filter((part) => Number.isFinite(part.percent)));
+  if (kind === "official") {
+    const move = descriptiveMove(deltas);
+    return move ? `${move}正式成绩是标准分或盾，不按卷面正确率排名。` : "正式成绩是标准分或盾，不按卷面正确率排名。";
   }
-  const weakSkills = weakest(skills || [], (skill) => skill.average);
-  const strongSkills = strongest(skills || [], (skill) => skill.average);
-  if (weakSkills.length && !(strongSkills.length === 1 && weakSkills.length === 1 && strongSkills[0].id === weakSkills[0].id)) {
-    const names = weakSkills.map((skill) => skill.label).join("、");
-    const sample = weakSkills[0];
-    const value = sample.unit === "percent" && Number.isFinite(sample.rawAverage) && sample.max
-      ? `${formatNumber(sample.rawAverage)}/${formatNumber(sample.max)}`
-      : sample.unit === "shield"
-        ? `${formatNumber(sample.average)} 盾`
-        : `${formatNumber(sample.average)} 分`;
-    sentences.push(`${names}最弱（班均 ${value}）`);
-  } else if (strongSkills.length && weakSkills.length && strongSkills[0].id !== weakSkills[0].id) {
-    sentences.push(`${strongSkills.map((skill) => skill.label).join("、")}最高，${weakSkills.map((skill) => skill.label).join("、")}最弱`);
-  }
-  const weakParts = weakest(parts || [], (part) => part.percent);
-  if (weakParts.length) {
-    const names = weakParts.map((part) => part.label).join("、");
-    const sample = weakParts[0];
-    sentences.push(`${names}最低（班均 ${formatNumber(sample.average)}/${formatNumber(sample.max)}）`);
-  }
-  if (!sentences.length) {
-    if ((skills || []).length === 1) return `这次记下了${skills[0].label}。`;
-    if ((parts || []).length === 1) return `这次记下了${parts[0].label}。`;
-    return "这场还没有可以比较的分数。";
-  }
-  return `${sentences.join("，")}。`;
+  if ((parts || []).some((part) => part.n > 0)) return judgement.message;
+  if ((skills || []).length === 1) return `这次只记下了${skills[0].label}，一项不能比较高低。`;
+  return "这场还没有可以按正确率比较的部分。";
+}
+
+function descriptiveMove(deltas) {
+  const moves = (deltas || []).filter((item) => Number.isFinite(item.delta) && item.unit === item.unit);
+  if (!moves.length) return "";
+  const biggest = [...moves].sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))[0];
+  if (Math.abs(biggest.delta) < 0.05) return "和上场比，各项分数差不多。";
+  const direction = biggest.delta > 0 ? "高" : "低";
+  return `${biggest.label}比上场${direction} ${unitWord(biggest.unit, biggest.delta)}。这只是分数差，不是能力结论。`;
 }
 
 export function classReport(sitting, results, previousSitting, allResults) {
@@ -183,7 +166,7 @@ export function classReport(sitting, results, previousSitting, allResults) {
   const parts = partSummary(sitting, results);
   const previous = previousSitting ? skillSummary(previousSitting, allResults) : [];
   const deltas = compareSkills(skills, previous);
-  return { skills, parts, deltas, sentence: takeaway({ skills, parts, deltas }) };
+  return { skills, parts, deltas, sentence: takeaway({ skills, parts, deltas, kind: sitting.kind }) };
 }
 
 export function previousComparableSitting(sitting, sittings) {
@@ -226,8 +209,8 @@ export function seriesDelta(series) {
 }
 
 export function deltaPhrase(delta, unit, noun) {
-  if (!Number.isFinite(delta) || Math.abs(delta) < 0.05) return `${noun}和上次持平`;
-  return `${noun}比上次${delta > 0 ? "提高" : "下降"} ${unitWord(unit, delta)}`;
+  if (!Number.isFinite(delta) || Math.abs(delta) < 0.05) return `${noun}和上场差不多。这只是分数描述，不是能力结论`;
+  return `${noun}比上场${delta > 0 ? "高" : "低"} ${unitWord(unit, delta)}。这只是分数差，不是能力结论`;
 }
 
 export function studentSentence(studentName, latestSkills, seriesBySkill) {
@@ -240,14 +223,12 @@ export function studentSentence(studentName, latestSkills, seriesBySkill) {
     })
     .filter(Boolean);
   const parts = [];
-  if (moves.length && moves.every((item) => Math.abs(item.delta) < 0.05)) parts.push("各科和上次持平");
+  if (moves.length && moves.every((item) => Math.abs(item.delta) < 0.05)) parts.push("各科分数和上场差不多。这只是分数描述，不是能力结论");
   else if (moves.length) {
     const biggest = [...moves].sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))[0];
     parts.push(deltaPhrase(biggest.delta, biggest.unit, biggest.label));
   }
-  const weak = weakest(latestSkills, (skill) => skill.value);
-  if (weak.length >= 1 && latestSkills.length >= 2) parts.push(`这次${weak.map((skill) => skill.label).join("、")}最弱`);
-  if (!parts.length) return latestSkills.length ? `${studentName}这次记下了${latestSkills.map((skill) => skill.label).join("、")}。` : `${studentName}还没有可计算的成绩。`;
+  if (!parts.length) return latestSkills.length ? `${studentName}记下了${latestSkills.map((skill) => skill.label).join("、")}。一项或一场分数不比较高低。` : `${studentName}还没有可计算的成绩。`;
   return `${parts.join("，")}。`;
 }
 

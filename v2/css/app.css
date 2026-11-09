@@ -47,6 +47,8 @@ a { color: var(--green-dark); }
   font-size: 22px;
   font-weight: 700;
 }
+.top-links { display: flex; gap: 14px; }
+.top-links a { font-size: 18px; font-weight: 650; }
 
 .top span { color: #d7efe4; font-size: 16px; }
 
@@ -140,10 +142,12 @@ th, td { border-bottom: 1px solid var(--line); padding: 8px; text-align: center;
 th { background: #f7f4ec; font-size: 16px; white-space: nowrap; }
 .file-pick { position: relative; overflow: hidden; width: fit-content; }
 .file-pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.sticky { position: sticky; left: 0; z-index: 1; background: white; text-align: left; min-width: 7.5rem; }
+.sticky { position: sticky; left: 0; z-index: 1; background: white; text-align: left; min-width: 7.5rem; box-shadow: 8px 0 10px rgba(27, 25, 20, 0.08); }
 thead .sticky { z-index: 3; background: #f7f4ec; }
 thead th { position: sticky; top: 0; z-index: 2; }
 .scroll { overflow: auto; border: 1px solid var(--line); border-radius: 14px; max-height: 70vh; }
+.scroll-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.issue, .exam-list a.issue { border-left: 6px solid var(--green); }
 
 .score {
   width: 4.6rem;

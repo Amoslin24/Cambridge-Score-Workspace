@@ -13,6 +13,7 @@ import {
   studentSentence,
   studentSkillSeries,
 } from "./analysis.js";
+import { classAttention, cohortCompare, evidenceLine, judgeItems, laterFollowUp, partSnapshots, RULE_LINES } from "./attention.js";
 import { normalizePaper } from "./legacy.js";
 import { applyScorePaste, namesFromPaste, parseScoreText } from "./paste.js";
 import {
@@ -133,7 +134,11 @@ function resultsFor(sittingId) {
 function shell(body, { wide = false } = {}) {
   const title = workspace.profile?.customTitle || workspace.profile?.teacherName || "";
   app.replaceChildren(
-    h("header", { class: "top" }, h("a", { href: "#/" }, "剑桥成绩"), title ? h("span", {}, title) : null),
+    h("header", { class: "top" },
+      h("a", { href: "#/" }, "先看什么"),
+      h("nav", { class: "top-links" }, h("a", { href: "#/entry" }, "记分"), h("a", { href: "#/students" }, "名单"), h("a", { href: "#/backup" }, "备份")),
+      title ? h("span", {}, title) : null,
+    ),
     h("main", { class: wide ? "wrap wide" : "wrap" }, storageError ? h("div", { class: "alert", role: "alert" }, storageError) : null, body),
   );
 }
@@ -142,28 +147,55 @@ function buttonLink(hash, className, text) {
   return h("a", { class: className, href: hash }, text);
 }
 
+function selectedClass() {
+  if (workspace.prefs?.classAll) return "";
+  const names = classes();
+  const preferred = workspace.prefs?.setName || "";
+  if (preferred && names.includes(preferred)) return preferred;
+  return names.length === 1 ? names[0] : "";
+}
+
 function renderHome() {
-  const students = workspace.students.length;
+  const names = classes();
+  const selected = selectedClass();
+  const students = visibleStudents(selected);
   const old = oldDataSummary(localStorage);
-  const recent = sittingsByDate()[0];
-  const actions = [];
-  if (!students) {
-    actions.push(buttonLink("#/students", "btn", "1. 添加学生"));
-    actions.push(h("p", { class: "lead" }, "先写下学生姓名。写完就可以记第一次考试。"));
-    if (old.present && !old.broken && (old.students || old.attempts)) {
-      actions.push(h("button", { class: "btn-secondary", type: "button", onClick: importOld }, "从旧版导入"));
-      actions.push(h("p", { class: "hint" }, "只读取旧版里已经记下的成绩，不会修改旧版。"));
-    }
-    if (rosterMessage) actions.push(h("div", { class: "note" }, rosterMessage));
-  } else {
-    actions.push(buttonLink("#/entry", "btn", "录入这次考试"));
-    actions.push(buttonLink("#/results", "btn-secondary", "看成绩"));
-    actions.push(buttonLink("#/backup", "btn-quiet", "备份"));
-    if (rosterMessage) actions.push(h("div", { class: "note" }, rosterMessage));
-    actions.push(h("p", { class: "meta" }, `学生 ${students} 人`, " · ", h("a", { href: "#/students" }, "名单")));
-    if (recent) actions.push(h("a", { href: `#/exam/${recent.id}` }, `最近一场：${sittingTitle(recent)}`));
+  if (!workspace.students.length) {
+    shell(h("div", {},
+      h("h1", {}, "先看什么"),
+      h("p", { class: "lead" }, "还没有学生，所以还没有可看的问题。先把名单加上。"),
+      buttonLink("#/students", "btn", "添加学生"),
+      old.present && !old.broken && (old.students || old.attempts) ? h("button", { class: "btn-secondary", type: "button", onClick: importOld }, "从旧版导入") : null,
+      old.present ? h("p", { class: "hint" }, "从旧版导入只读取，不会修改旧版。") : null,
+      rosterMessage ? h("div", { class: "note" }, rosterMessage) : null,
+    ));
+    return;
   }
-  shell(h("div", {}, h("h1", {}, "剑桥成绩"), h("p", { class: "lead" }, "给一个班记下一次考试。成绩只留在这台浏览器里。"), h("div", { class: "stack" }, actions)));
+  const attention = classAttention({ students, sittings: workspace.sittings, results: workspace.results });
+  shell(h("div", {},
+    h("h1", {}, selected ? `${selected}先看什么` : "先看什么"),
+    h("p", { class: "lead" }, "先选班。下面最多三条：哪一项这次偏低、涉及谁、分数是什么。点进去再看趋势。"),
+    names.length ? h("div", {}, h("label", { for: "home-class" }, "哪个班"), h("select", { id: "home-class", value: selected, onChange: (event) => { workspace.prefs = { ...(workspace.prefs || {}), setName: event.target.value, classAll: event.target.value === "" }; persist(); render(); } }, [h("option", { value: "" }, "全部学生"), ...names.map((name) => h("option", { value: name }, name))])) : null,
+    rosterMessage ? h("div", { class: "note" }, rosterMessage) : null,
+    attention.items.length ? h("div", { class: "exam-list section" }, attention.items.map((item) => h("a", { href: attentionHref(item, selected) },
+      h("strong", {}, `${item.repeated ? "再次出现" : "一次信号"} · ${item.label}`),
+      h("div", {}, evidenceLine(item)),
+      h("div", { class: "meta" }, item.repeated ? `同一级别的练习里，这项已经出现 ${item.hitCount} 次。` : "目前只在一场里达到这条线。"),
+      h("div", {}, item.affected.length ? `不高于班均：${item.affected.map((student) => student.name).join("、")}` : `有分的 ${item.n} 人正确率一样。`),
+    ))) : h("div", { class: "card" }, h("p", {}, "现在没有达到「偏低」标准的部分。人数不够，或各项正确率差不多时，这里不会硬指一项。")),
+    h("details", { class: "section" }, h("summary", {}, "这些判断用的规则"), RULE_LINES.map((line) => h("p", { class: "hint" }, line))),
+    h("div", { class: "btn-row section" },
+      buttonLink("#/entry", "btn", "录入这次考试"),
+      buttonLink("#/students", "btn-quiet", "名单"),
+      buttonLink("#/backup", "btn-quiet", "备份"),
+      buttonLink("#/results", "btn-quiet", "各场成绩"),
+    ),
+  ));
+}
+
+function attentionHref(item, className) {
+  const params = new URLSearchParams({ part: item.partId, level: item.level, kind: item.kind, class: className || "" });
+  return `#/attention?${params}`;
 }
 
 function addStudents(names, setName) {
@@ -258,6 +290,8 @@ function blankDraft(sitting) {
     paper: sitting?.paper || prefs.paper || "",
     setName: prefs.setName || onlyClass,
     includeSpeaking: !!prefs.includeSpeaking,
+    visibleGroup: "",
+    groupChosen: false,
     rows: {},
     dirty: false,
     loadedFrom: "",
@@ -323,6 +357,11 @@ function renderEntry() {
     if (!last || last.id !== column.groupId) groups.push({ id: column.groupId, label: column.group, columns: [column] });
     else last.columns.push(column);
   }
+  if (!draft.groupChosen && window.innerWidth < 1000 && groups[0]) {
+    draft.visibleGroup = groups[0].id;
+    draft.groupChosen = true;
+  }
+  const shownGroups = draft.visibleGroup ? groups.filter((group) => group.id === draft.visibleGroup) : groups;
   const classOptions = ["", ...classes()];
   shell(h("div", {},
     h("a", { class: "back", href: "#/" }, "返回"),
@@ -338,8 +377,17 @@ function renderEntry() {
       classes().length ? h("div", {}, h("label", { for: "exam-class" }, "哪个班"), h("select", { id: "exam-class", value: draft.setName, onChange: (event) => { draft.setName = event.target.value; render(); } }, classOptions.map((name) => h("option", { value: name }, name || "全部学生"))), h("span", { class: "hint" }, "教学班是你上课的那一组，例如 A1。")) : null,
       showSpeakingToggle ? h("div", { class: "full" }, h("label", { class: "check" }, h("input", { type: "checkbox", checked: draft.includeSpeaking ? "checked" : null, onChange: (event) => { draft.includeSpeaking = event.target.checked; render(); } }), "这次也记口语")) : null,
     ),
-    h("div", { class: "scroll section" }, scoreTable(draft, students, groups)),
-    h("p", { class: "hint" }, "空着的学生不会保存。勾选缺考的学生会记为缺考。"),
+    h("div", { class: "tabs", role: "tablist" },
+      h("button", { type: "button", "aria-pressed": String(!draft.visibleGroup), onClick: () => { draft.visibleGroup = ""; draft.groupChosen = true; render(); } }, "全部"),
+      groups.map((group) => h("button", { type: "button", "aria-pressed": String(draft.visibleGroup === group.id), onClick: () => { draft.visibleGroup = group.id; draft.groupChosen = true; render(); } }, group.label)),
+    ),
+    h("div", { class: "scroll-controls" },
+      h("button", { class: "btn-quiet", type: "button", onClick: () => document.querySelector("#score-scroll")?.scrollBy({ left: -260, behavior: "smooth" }) }, "← 向左"),
+      h("span", { class: "hint" }, "姓名固定在左边。点项目，或左右滑动，看其余部分。"),
+      h("button", { class: "btn-quiet", type: "button", onClick: () => document.querySelector("#score-scroll")?.scrollBy({ left: 260, behavior: "smooth" }) }, "向右 →"),
+    ),
+    h("div", { class: "scroll section", id: "score-scroll" }, scoreTable(draft, students, shownGroups.length ? shownGroups : groups)),
+    h("p", { class: "hint" }, "空着的学生不会保存，空着也不算 0 分。勾选缺考的学生会记为缺考。"),
     h("p", {}, h("button", { class: "btn", type: "button", onClick: () => saveEntry(draft, columns, mode, students) }, "保存这次成绩")),
   ), { wide: true });
 }
@@ -566,6 +614,91 @@ function skillText(skill) {
   return formatNumber(skill.value);
 }
 
+function renderAttention() {
+  const params = parseRoute().params;
+  const partId = params.get("part") || "";
+  const level = params.get("level") || "";
+  const kind = params.get("kind") || "practice";
+  const className = params.get("class") || "";
+  const students = visibleStudents(className);
+  const item = classAttention({ students, sittings: workspace.sittings, results: workspace.results }).items.find((entry) => entry.partId === partId && entry.level === level && entry.kind === kind)
+    || classAttention({ students, sittings: workspace.sittings, results: workspace.results }).items[0];
+  const history = workspace.sittings
+    .filter((sitting) => sitting.level === level && sitting.kind === kind)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const rows = history.map((sitting) => {
+    const part = partSnapshots(sitting, workspace.results, students).find((entry) => entry.id === partId);
+    const judgement = judgeItems(partSnapshots(sitting, workspace.results, students).filter((entry) => entry.n > 0));
+    return { sitting, part, signal: judgement.status === "signal" && judgement.low.some((entry) => entry.id === partId) };
+  }).filter((row) => row.part);
+  const latest = rows.at(-1);
+  const previous = rows.length > 1 ? rows.at(-2) : null;
+  const compared = latest && previous ? cohortCompare(previous.sitting, latest.sitting, students, workspace.results, partId, latest.part.max) : null;
+  const follow = (workspace.followUps || []).find((entry) => entry.partId === partId && entry.level === level && entry.kind === kind && entry.className === className);
+  const later = follow ? laterFollowUp(follow, workspace.sittings, workspace.results, students) : [];
+  shell(h("div", {},
+    h("a", { class: "back", href: "#/" }, "返回"),
+    h("h1", {}, item ? item.label : "这一项"),
+    h("p", { class: "takeaway" }, item ? (item.repeated ? `再次出现。${evidenceLine(item)}` : `一次信号，还不是稳定结论。${evidenceLine(item)}`) : "这一项现在没有达到偏低的标准。"),
+    h("p", { class: "hint" }, "分数不能说明原因。下面只列出谁的正确率不高于班均，以及各场的分母和人数。"),
+    h("div", { class: "scroll" }, h("table", {},
+      h("thead", {}, h("tr", {}, h("th", {}, "日期"), h("th", {}, "试卷"), h("th", {}, "正确率"), h("th", {}, "有分"), h("th", {}, "空着"), h("th", {}, "缺考"), h("th", {}, "这次"))),
+      h("tbody", {}, rows.map((row) => h("tr", { class: row.signal ? "weak" : "" },
+        h("td", {}, formatDate(row.sitting.date)),
+        h("td", {}, row.sitting.paper || "未写名称"),
+        h("td", {}, row.part.n ? `${formatNumber(row.part.percent)}%（${formatNumber(row.part.rawAverage)}/${formatNumber(row.part.max)}）` : "—"),
+        h("td", {}, String(row.part.n)),
+        h("td", {}, String(row.part.blank)),
+        h("td", {}, String(row.part.absent)),
+        h("td", {}, row.signal ? (rows.filter((entry) => entry.signal).length > 1 ? "再次出现" : "一次信号") : "未拉开"),
+      ))),
+    )),
+    h("h2", { class: "section" }, "不高于班均的学生"),
+    item?.affected?.length ? h("div", { class: "exam-list" }, item.affected.map((student) => h("a", { href: `#/student/${student.studentId}` }, h("strong", {}, student.name), h("div", {}, `${formatNumber(student.percent)}%（${formatNumber(student.raw)}/${formatNumber(item.max)}）`)))) : h("p", {}, "有分的人差不多，不单列谁。"),
+    compared?.ok ? h("section", { class: "section card" },
+      h("h2", {}, "和上场比，只算两次都有分的人"),
+      h("p", {}, `上场 ${compared.earlierScored} 人有分，这场 ${compared.laterScored} 人有分，两次都有分的是 ${compared.matchedCount} 人。`),
+      compared.onlyLater.length ? h("p", {}, `只在后一场有分：${compared.onlyLater.map((student) => student.name).join("、")}。`) : null,
+      compared.onlyEarlier.length ? h("p", {}, `只在前一场有分：${compared.onlyEarlier.map((student) => student.name).join("、")}。`) : null,
+      compared.matchedCount ? h("p", {}, Math.abs(compared.delta || 0) < 0.05 ? `两次都有分的这 ${compared.matchedCount} 人，正确率差不多（${formatNumber(compared.laterMean)}%）。` : `这 ${compared.matchedCount} 人的正确率从 ${formatNumber(compared.earlierMean)}% 到 ${formatNumber(compared.laterMean)}%，${compared.delta > 0 ? "高" : "低"} ${formatNumber(Math.abs(compared.delta))} 个百分点。`) : h("p", {}, "没有人两次都有分，所以不算分数差。"),
+      h("p", { class: "hint" }, compared.note),
+    ) : null,
+    h("section", { class: "card section" },
+      h("h2", {}, "下次核对（可选）"),
+      h("p", { class: "hint" }, "写一句你看到的情况，和一句下次想核对的事。这里不会自动给教学建议。"),
+      h("label", { for: "follow-observe" }, "看到的情况"),
+      h("input", { id: "follow-observe", type: "text", maxlength: "80", value: follow?.observation || "", placeholder: "例如 这格空着的人不少" }),
+      h("label", { for: "follow-next" }, "下次核对"),
+      h("input", { id: "follow-next", type: "text", maxlength: "80", value: follow?.nextCheck || "", placeholder: "例如 下次看这一部分是否还偏低" }),
+      rosterMessage ? h("div", { class: "note" }, rosterMessage) : null,
+      h("p", {}, h("button", { class: "btn", type: "button", onClick: () => saveFollowUp({ partId, level, kind, className, label: item?.label || partId }) }, "记下这句")),
+      later.length ? h("div", { class: "note" }, later.map((entry) => `${formatDate(entry.date)} ${entry.paper || ""}：${formatNumber(entry.percent)}%（${entry.n} 人）。${entry.note}`).join(" ")) : null,
+    ),
+    h("details", {}, h("summary", {}, "规则"), RULE_LINES.map((line) => h("p", { class: "hint" }, line))),
+  ));
+}
+
+function saveFollowUp({ partId, level, kind, className, label }) {
+  const observation = document.querySelector("#follow-observe")?.value.trim().slice(0, 80) || "";
+  const nextCheck = document.querySelector("#follow-next")?.value.trim().slice(0, 80) || "";
+  workspace.followUps = workspace.followUps || [];
+  const same = (entry) => entry.partId === partId && entry.level === level && entry.kind === kind && entry.className === className;
+  if (!observation && !nextCheck) workspace.followUps = workspace.followUps.filter((entry) => !same(entry));
+  else {
+    const existing = workspace.followUps.find(same);
+    if (existing) {
+      existing.observation = observation;
+      existing.nextCheck = nextCheck;
+      existing.label = label;
+    } else {
+      workspace.followUps.push({ id: crypto.randomUUID(), partId, level, kind, className, label, observation, nextCheck, createdAt: new Date().toISOString().slice(0, 10) });
+    }
+  }
+  persist();
+  rosterMessage = "已记下。这只是你的备忘，不是诊断。";
+  render();
+}
+
 function renderExam() {
   const sitting = findSitting(parseRoute().id);
   if (!sitting) {
@@ -575,16 +708,18 @@ function renderExam() {
   const previous = previousComparableSitting(sitting, workspace.sittings);
   const report = classReport(sitting, workspace.results, previous, workspace.results);
   const students = sortedStudents();
+  const parts = partSnapshots(sitting, workspace.results, students).filter((part) => part.n > 0);
+  const judgement = judgeItems(parts);
+  const signalIds = new Set(judgement.status === "signal" ? judgement.low.map((item) => item.id) : []);
   const estimated = report.skills.some((skill) => Number.isFinite(skill.estimatedShield));
-  const weakPartIds = new Set(lowestIds(report.parts, (part) => part.percent));
   shell(h("div", {},
     h("a", { class: "back", href: "#/results" }, "返回成绩"),
     h("h1", {}, sittingTitle(sitting)),
-    h("p", { class: "takeaway" }, report.sentence),
+    h("p", { class: "takeaway" }, sitting.kind === "official" ? report.sentence : judgement.message),
     estimated ? h("p", { class: "hint" }, "约几盾是按模拟参考表估算的，不是正式成绩。") : null,
     h("div", { class: "chips" }, report.skills.map((skill) => h("span", { class: "chip" }, `${skill.label} 班均 ${skill.unit === "percent" ? skillText({ ...skill, raw: skill.rawAverage, max: skill.max }) : skillText(skill)} · ${skill.n} 人`))),
     h("div", { class: "scroll" }, h("table", {},
-      h("thead", {}, h("tr", {}, h("th", { class: "sticky" }, "学生"), report.skills.map((skill) => h("th", {}, skill.label)), h("th", {}, "比上次"))),
+      h("thead", {}, h("tr", {}, h("th", { class: "sticky" }, "学生"), report.skills.map((skill) => h("th", {}, skill.label)), h("th", {}, "分数差"))),
       h("tbody", {}, students.map((student) => {
         const result = workspace.results.find((item) => item.sittingId === sitting.id && item.studentId === student.id);
         if (!result) return null;
@@ -597,14 +732,17 @@ function renderExam() {
         );
       }).filter(Boolean)),
     )),
-    report.parts.length ? h("section", { class: "section" },
-      h("h2", {}, "哪一部分强，哪一部分弱"),
+    h("p", { class: "hint" }, "分数差只描述同级别、同类型考试的数字，不是能力鉴定。"),
+    parts.length ? h("section", { class: "section" },
+      h("h2", {}, "各部分正确率"),
       h("div", { class: "scroll" }, h("table", {},
-        h("thead", {}, h("tr", {}, h("th", { class: "sticky" }, "部分"), h("th", {}, "班均"), h("th", {}, "人数"))),
-        h("tbody", {}, report.parts.map((part) => h("tr", { class: weakPartIds.has(part.id) ? "weak" : "" },
-          h("th", { class: "sticky" }, part.label, weakPartIds.has(part.id) ? h("span", { class: "weak-label" }, " 最弱") : null),
-          h("td", {}, `${formatNumber(part.average)}/${formatNumber(part.max)}`),
+        h("thead", {}, h("tr", {}, h("th", { class: "sticky" }, "部分"), h("th", {}, "正确率"), h("th", {}, "有分"), h("th", {}, "空着"), h("th", {}, "缺考"))),
+        h("tbody", {}, parts.map((part) => h("tr", { class: signalIds.has(part.id) ? "weak" : "" },
+          h("th", { class: "sticky" }, part.label, signalIds.has(part.id) ? h("span", { class: "weak-label" }, " 这一次偏低") : null),
+          h("td", {}, `${formatNumber(part.percent)}%（${formatNumber(part.rawAverage)}/${formatNumber(part.max)}）`),
           h("td", {}, String(part.n)),
+          h("td", {}, String(part.blank)),
+          h("td", {}, String(part.absent)),
         ))),
       )),
     ) : null,
@@ -642,7 +780,7 @@ function studentDelta(studentId, sitting, previous) {
 function deltaNode(delta, unit) {
   if (!Number.isFinite(delta) || Math.abs(delta) < 0.05) return "持平";
   const word = unit === "shield" ? "盾" : unit === "percent" ? "个百分点" : "分";
-  return h("span", { class: delta > 0 ? "up" : "down" }, `${delta > 0 ? "↑" : "↓"} ${formatNumber(Math.abs(delta))} ${word}`);
+  return `${delta > 0 ? "高" : "低"} ${formatNumber(Math.abs(delta))} ${word}`;
 }
 
 function deleteSitting(sitting) {
@@ -945,6 +1083,7 @@ function render() {
     else if (route.page === "entry") renderEntry();
     else if (route.page === "results") renderResults();
     else if (route.page === "exam") renderExam();
+    else if (route.page === "attention") renderAttention();
     else if (route.page === "compare") renderCompare();
     else if (route.page === "trend") renderTrend();
     else if (route.page === "student") renderStudent();
