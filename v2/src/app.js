@@ -1,10 +1,12 @@
 import {
   canCompare,
   classReport,
-  classSkillSeries,
+  classSkillTrend,
   deltaPhrase,
   formatDate,
   formatNumber,
+  matchedPairNarrative,
+  matchedSkillPair,
   previousComparableSitting,
   resultMetrics,
   seriesDelta,
@@ -213,7 +215,10 @@ function addStudents(names, setName) {
   }
   workspace.prefs = { ...(workspace.prefs || {}), setName: classroom };
   persist();
-  rosterMessage = added ? `已添加 ${added} 人。${skipped ? `跳过 ${skipped} 个重复姓名。` : ""}下一步：录入这次考试。` : "这些姓名已经在名单里。";
+  const total = workspace.students.length;
+  rosterMessage = added
+    ? `这次加入 ${added} 人。名单里现在有 ${total} 人。${skipped ? `跳过 ${skipped} 个重复姓名。` : ""}`
+    : `没有新的姓名。名单里现在有 ${total} 人。`;
   render();
   document.querySelector("#student-name")?.focus();
 }
@@ -223,7 +228,7 @@ function renderStudents() {
   const nameInput = h("input", { id: "student-name", type: "text", maxlength: "80", autocomplete: "off", placeholder: "学生姓名" });
   const classInput = h("input", { id: "student-class", type: "text", maxlength: "80", value: prefs.setName || "", placeholder: "例如 A1，可以空着" });
   nameInput.addEventListener("paste", (event) => {
-    const parsed = namesFromPaste(event.clipboardData.getData("text"));
+    const parsed = namesFromPaste(event.clipboardData.getData("text/plain") || event.clipboardData.getData("text"));
     if (parsed.error || parsed.single || parsed.names.length < 2) return;
     event.preventDefault();
     addStudents(parsed.names, classInput.value);
@@ -252,8 +257,8 @@ function renderStudents() {
     h("p", { class: "lead" }, workspace.students.length ? "还要加人，就写在下面。可以从 Excel 粘贴一整列姓名。" : "写下姓名后按回车。教学班填你上课的那一组，例如 A1。"),
     rosterMessage ? h("div", { class: "note" }, rosterMessage) : null,
     h("div", { class: "card fields" },
-      h("div", {}, h("label", { class: "req", for: "student-name" }, "姓名"), nameInput),
-      h("div", {}, h("label", { for: "student-class" }, "教学班"), classInput, h("span", { class: "hint" }, "同一组会排在一起。不是考试级别。")),
+      h("div", {}, h("label", { for: "student-name" }, h("span", { class: "req" }, "姓名"), nameInput)),
+      h("div", {}, h("label", { for: "student-class" }, "教学班", classInput), h("span", { class: "hint" }, "同一组会排在一起。不是考试级别。")),
     ),
     workspace.students.length ? h("p", {}, buttonLink("#/entry", "btn", "下一步：录入这次考试")) : null,
     h("div", { class: "exam-list section" }, list),
@@ -846,20 +851,32 @@ function renderCompare() {
       h("div", {}, h("label", { for: "compare-left" }, "第一场"), h("select", { id: "compare-left", value: compareSelection.left, onChange: (event) => { compareSelection.left = event.target.value; render(); } }, options.map((option) => option.cloneNode(true)))),
       h("div", {}, h("label", { for: "compare-right" }, "第二场"), h("select", { id: "compare-right", value: compareSelection.right, onChange: (event) => { compareSelection.right = event.target.value; render(); } }, options.map((option) => option.cloneNode(true)))),
     ),
-    verdict.ok ? h("p", { class: "takeaway" }, classReport(later, workspace.results, earlier, workspace.results).sentence) : h("p", { class: "alert" }, verdict.reason),
+    verdict.ok ? h("p", { class: "takeaway" }, "变化只算两场都完整的同一批人。各场各自有分的平均分列在下面，不能拿来相减。") : h("p", { class: "alert" }, verdict.reason),
     h("div", { class: "scroll section" }, h("table", {},
-      h("caption", { class: "meta" }, "全班"),
-      h("thead", {}, h("tr", {}, h("th", { class: "sticky" }, "技能"), h("th", {}, earlier ? formatDate(earlier.date) : "第一场"), h("th", {}, later ? formatDate(later.date) : "第二场"), verdict.ok ? h("th", {}, "变化") : null)),
-      h("tbody", {}, skillIds.map((id) => {
+      h("caption", { class: "meta" }, "同一批完整成绩"),
+      h("thead", {}, h("tr", {}, h("th", { class: "sticky" }, "技能"), h("th", {}, earlier ? formatDate(earlier.date) : "第一场"), h("th", {}, later ? formatDate(later.date) : "第二场"), verdict.ok ? h("th", {}, "同一批的分数差") : null, h("th", {}, "人数"))),
+      h("tbody", {}, skillIds.flatMap((id) => {
         const left = leftSkills.find((skill) => skill.id === id);
         const right = rightSkills.find((skill) => skill.id === id);
-        const comparable = verdict.ok && left && right && left.unit === right.unit;
-        return h("tr", {},
-          h("th", { class: "sticky" }, (right || left).label),
-          h("td", {}, left ? skillText({ ...left, raw: left.rawAverage, value: left.average }) : "—"),
-          h("td", {}, right ? skillText({ ...right, raw: right.rawAverage, value: right.average }) : "—"),
-          comparable ? h("td", {}, deltaNode(right.average - left.average, right.unit)) : verdict.ok ? h("td", {}, "—") : null,
+        const pair = verdict.ok ? matchedSkillPair(earlier, later, workspace.results, id, sortedStudents()) : null;
+        const label = (right || left).label;
+        const matchedRow = h("tr", {},
+          h("th", { class: "sticky" }, label),
+          h("td", {}, pair?.matchedCount && pair.unit === "percent" ? `${formatNumber(pair.matchedRawBefore)}/${formatNumber(pair.max)}` : pair?.matchedCount ? formatNumber(pair.matchedMeanBefore) : "—"),
+          h("td", {}, pair?.matchedCount && pair.unit === "percent" ? `${formatNumber(pair.matchedRawAfter)}/${formatNumber(pair.max)}` : pair?.matchedCount ? formatNumber(pair.matchedMeanAfter) : "—"),
+          verdict.ok ? h("td", {}, pair?.matchedCount ? deltaNode(pair.delta, pair.unit) : "没有同一批") : null,
+          h("td", {}, pair ? `${pair.matchedCount} 人` : "—"),
         );
+        const descriptiveRow = pair && (pair.descriptiveBeforeN !== pair.matchedCount || pair.descriptiveAfterN !== pair.matchedCount)
+          ? h("tr", {},
+            h("th", { class: "sticky" }, `${label} · 各场有分的人`),
+            h("td", {}, pair.descriptiveBeforeN ? `${formatNumber(pair.descriptiveRawBefore)}/${formatNumber(pair.max)} · ${pair.descriptiveBeforeN} 人` : "—"),
+            h("td", {}, pair.descriptiveAfterN ? `${formatNumber(pair.descriptiveRawAfter)}/${formatNumber(pair.max)} · ${pair.descriptiveAfterN} 人` : "—"),
+            h("td", {}, "不比较"),
+            h("td", {}, "人不同"),
+          )
+          : null;
+        return [matchedRow, descriptiveRow];
       })),
     )),
     verdict.ok ? studentCompare(earlier, later, skillIds) : null,
@@ -902,21 +919,22 @@ function renderTrend() {
   if (!skillIds.includes(trendSelection.skillId)) trendSelection.skillId = skillIds[0] || "reading";
   const levels = [...new Set(available.map((sitting) => sitting.level))];
   const kinds = [...new Set(available.filter((sitting) => sitting.level === trendSelection.level).map((sitting) => sitting.kind))];
-  const classSeries = classSkillSeries(workspace.sittings, workspace.results, trendSelection);
-  const classChange = seriesDelta(classSeries);
+  const trend = classSkillTrend(workspace.sittings, workspace.results, { ...trendSelection, students: sortedStudents() });
+  const classSeries = trend.chart;
   shell(h("div", {},
     h("a", { class: "back", href: "#/results" }, "返回成绩"),
     h("h1", {}, "进步曲线"),
-    h("p", { class: "lead" }, "只比较同一级别、同一种计分。练习看正确率，正式考试看标准分或盾。"),
+    h("p", { class: "lead" }, "图和「高 / 低」只算相邻两场都完整的同一批人。某一项空着不算 0，也不和别人的平均分相减。"),
     h("div", { class: "fields" },
       h("div", {}, h("label", { for: "trend-level" }, "级别"), h("select", { id: "trend-level", value: trendSelection.level, onChange: (event) => { trendSelection.level = event.target.value; trendSelection.kind = available.find((sitting) => sitting.level === trendSelection.level)?.kind || "practice"; render(); } }, levels.map((level) => h("option", { value: level }, levelLabel(level))))),
       h("div", {}, h("label", { for: "trend-kind" }, "类型"), h("select", { id: "trend-kind", value: trendSelection.kind, onChange: (event) => { trendSelection.kind = event.target.value; render(); } }, kinds.map((kind) => h("option", { value: kind }, kind === "official" ? "正式考试" : kind === "classroom" ? "课堂练习" : "练习")))),
     ),
     h("div", { class: "tabs", role: "tablist" }, skillIds.map((id) => h("button", { type: "button", "aria-pressed": String(trendSelection.skillId === id), onClick: () => { trendSelection.skillId = id; render(); } }, SKILL_LABEL[id] || id))),
     h("h2", {}, `全班${SKILL_LABEL[trendSelection.skillId] || ""}`),
-    h("p", { class: "takeaway" }, classChange ? deltaPhrase(classChange.delta, classChange.unit, `本班${SKILL_LABEL[trendSelection.skillId] || ""}`) + "。" : classSeries.length ? "只有一场，再记一次就能看出上升还是下降。" : "这个项目还没有分数。"),
+    trend.pairs.length ? trend.pairs.map((pair) => h("p", { class: "takeaway" }, matchedPairNarrative(pair, SKILL_LABEL[trendSelection.skillId] || "这项"))) : h("p", { class: "takeaway" }, classSeries.length ? "只有一场完整成绩，还不能比较。" : "这个项目还没有同一批完整成绩。"),
     chart(classSeries, trendSelection),
-    seriesTable(classSeries, "场次"),
+    classSeries.length ? h("p", { class: "hint" }, `图上是最近两场都完整的 ${classSeries[0].n} 人。`) : null,
+    seriesTable(classSeries, "同一批"),
     h("h2", { class: "section" }, "一个学生"),
     h("label", { for: "trend-student" }, "学生"),
     h("select", { id: "trend-student", value: trendSelection.studentId, onChange: (event) => { trendSelection.studentId = event.target.value; render(); } }, [h("option", { value: "" }, "选择学生"), ...sortedStudents().map((student) => h("option", { value: student.id }, student.setName ? `${student.name} · ${student.setName}` : student.name))]),

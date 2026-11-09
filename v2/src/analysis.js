@@ -161,12 +161,20 @@ function descriptiveMove(deltas) {
   return `${biggest.label}比上场${direction} ${unitWord(biggest.unit, biggest.delta)}。这只是分数差，不是能力结论。`;
 }
 
-export function classReport(sitting, results, previousSitting, allResults) {
+export function classReport(sitting, results, previousSitting, allResults, students) {
   const skills = skillSummary(sitting, results);
   const parts = partSummary(sitting, results);
-  const previous = previousSitting ? skillSummary(previousSitting, allResults) : [];
-  const deltas = compareSkills(skills, previous);
-  return { skills, parts, deltas, sentence: takeaway({ skills, parts, deltas, kind: sitting.kind }) };
+  const pairs = previousSitting ? skills.map((skill) => matchedSkillPair(previousSitting, sitting, allResults, skill.id, students)) : [];
+  const deltas = pairs.filter((pair) => pair.matchedCount).map((pair) => ({
+    id: pair.skillId,
+    label: skills.find((skill) => skill.id === pair.skillId)?.label || pair.skillId,
+    unit: pair.unit,
+    delta: pair.delta,
+    average: pair.matchedMeanAfter,
+    previous: pair.matchedMeanBefore,
+    n: pair.matchedCount,
+  }));
+  return { skills, parts, deltas, pairs, sentence: takeaway({ skills, parts, deltas, kind: sitting.kind }) };
 }
 
 export function previousComparableSitting(sitting, sittings) {
@@ -195,10 +203,106 @@ export function classSkillSeries(sittings, results, { level, kind, skillId }) {
     .map((sitting) => {
       const skill = skillSummary(sitting, results).find((item) => item.id === skillId);
       if (!skill) return null;
-      return { sittingId: sitting.id, date: sitting.date, paper: sitting.paper, value: skill.average, unit: skill.unit, n: skill.n, raw: skill.rawAverage, max: skill.max };
+      return { sittingId: sitting.id, date: sitting.date, paper: sitting.paper, value: skill.average, unit: skill.unit, n: skill.n, raw: skill.rawAverage, max: skill.max, descriptive: true };
     })
     .filter(Boolean)
     .sort((a, b) => a.date.localeCompare(b.date) || a.sittingId.localeCompare(b.sittingId));
+}
+
+export function skillObservation(sitting, result, skillId) {
+  if (!result) return { state: "missing" };
+  if (result.status === "absent") return { state: "absent" };
+  const metrics = resultMetrics(sitting, result);
+  if (metrics.error) return { state: "invalid" };
+  const skill = metrics.skills.find((item) => item.id === skillId);
+  if (!skill || !Number.isFinite(skill.value)) return { state: "incomplete" };
+  return { state: "complete", value: skill.value, raw: skill.raw, max: skill.max, unit: skill.unit };
+}
+
+function peopleIn(sitting, results, students) {
+  const ids = new Set([...(students || []).map((student) => student.id), ...results.filter((result) => result.sittingId === sitting.id).map((result) => result.studentId)]);
+  const known = new Map((students || []).map((student) => [student.id, student]));
+  return [...ids].map((id) => known.get(id) || { id, name: id });
+}
+
+export function matchedSkillPair(earlier, later, results, skillId, students) {
+  const roster = peopleIn(earlier, results, students).concat(peopleIn(later, results, []).filter((student) => !peopleIn(earlier, results, students).some((item) => item.id === student.id)));
+  const unique = [...new Map(roster.map((student) => [student.id, student])).values()];
+  const rows = unique.map((student) => ({
+    student,
+    before: skillObservation(earlier, results.find((result) => result.sittingId === earlier.id && result.studentId === student.id), skillId),
+    after: skillObservation(later, results.find((result) => result.sittingId === later.id && result.studentId === student.id), skillId),
+  }));
+  const matched = rows.filter((row) => row.before.state === "complete" && row.after.state === "complete");
+  const beforeOnly = rows.filter((row) => row.before.state === "complete");
+  const afterOnly = rows.filter((row) => row.after.state === "complete");
+  const unit = matched[0]?.before.unit || beforeOnly[0]?.before.unit || afterOnly[0]?.after.unit || "percent";
+  const max = matched[0]?.before.max || beforeOnly[0]?.before.max || afterOnly[0]?.after.max || null;
+  const matchedMeanBefore = average(matched.map((row) => row.before.value));
+  const matchedMeanAfter = average(matched.map((row) => row.after.value));
+  return {
+    skillId,
+    earlier,
+    later,
+    rows,
+    matched,
+    matchedCount: matched.length,
+    matchedMeanBefore,
+    matchedMeanAfter,
+    matchedRawBefore: average(matched.map((row) => row.before.raw)),
+    matchedRawAfter: average(matched.map((row) => row.after.raw)),
+    delta: matched.length ? matchedMeanAfter - matchedMeanBefore : null,
+    unit,
+    max,
+    descriptiveBefore: average(beforeOnly.map((row) => row.before.value)),
+    descriptiveAfter: average(afterOnly.map((row) => row.after.value)),
+    descriptiveRawBefore: average(beforeOnly.map((row) => row.before.raw)),
+    descriptiveRawAfter: average(afterOnly.map((row) => row.after.raw)),
+    descriptiveBeforeN: beforeOnly.length,
+    descriptiveAfterN: afterOnly.length,
+    excluded: rows.filter((row) => !(row.before.state === "complete" && row.after.state === "complete")),
+  };
+}
+
+function exclusionText(row) {
+  const side = (state, when) => {
+    if (state === "absent") return `${when}缺考`;
+    if (state === "missing") return `${when}没有记录`;
+    if (state === "incomplete") return `${when}这一项没填完（空着不算 0）`;
+    if (state === "invalid") return `${when}算不出来`;
+    return "";
+  };
+  return [side(row.before.state, "前一场"), side(row.after.state, "后一场")].filter(Boolean).join("，");
+}
+
+export function matchedPairNarrative(pair, label) {
+  const sentences = [];
+  if (!pair.matchedCount) sentences.push(`${label}没有同一批完整成绩，不能说上升或下降。`);
+  else if (Math.abs(pair.delta) < 0.05) sentences.push(`同一批 ${pair.matchedCount} 人的${label}和上场差不多。这只是分数描述，不是能力结论。`);
+  else sentences.push(`同一批 ${pair.matchedCount} 人的${label}比上场${pair.delta > 0 ? "高" : "低"} ${unitWord(pair.unit, pair.delta)}。这只是分数差，不是能力结论。`);
+  if (pair.matchedCount && pair.unit === "percent" && Number.isFinite(pair.matchedRawBefore) && Number.isFinite(pair.max)) {
+    sentences.push(`这批人是 ${formatNumber(pair.matchedRawBefore)}/${formatNumber(pair.max)} 到 ${formatNumber(pair.matchedRawAfter)}/${formatNumber(pair.max)}。`);
+  }
+  if (pair.excluded.length) sentences.push(`没有算进比较：${pair.excluded.map((row) => `${row.student.name}（${exclusionText(row)}）`).join("，")}。`);
+  const differentPeople = pair.descriptiveBeforeN !== pair.matchedCount || pair.descriptiveAfterN !== pair.matchedCount;
+  if (differentPeople && pair.descriptiveBeforeN && pair.descriptiveAfterN && Number.isFinite(pair.descriptiveRawBefore)) {
+    sentences.push(`各场各自有分的人是 ${formatNumber(pair.descriptiveRawBefore)}/${formatNumber(pair.max)}（${pair.descriptiveBeforeN} 人）和 ${formatNumber(pair.descriptiveRawAfter)}/${formatNumber(pair.max)}（${pair.descriptiveAfterN} 人）。这两次不是同一批人，不能当成提高或下降。`);
+  }
+  return sentences.join("");
+}
+
+export function classSkillTrend(sittings, results, { level, kind, skillId, students }) {
+  const ordered = sittings.filter((sitting) => sitting.level === level && sitting.kind === kind && sitting.date).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  const pairs = [];
+  for (let index = 1; index < ordered.length; index += 1) pairs.push(matchedSkillPair(ordered[index - 1], ordered[index], results, skillId, students));
+  const latest = pairs.at(-1) || null;
+  const chart = latest?.matchedCount
+    ? [
+        { date: latest.earlier.date, paper: latest.earlier.paper, value: latest.matchedMeanBefore, raw: latest.matchedRawBefore, max: latest.max, unit: latest.unit, n: latest.matchedCount },
+        { date: latest.later.date, paper: latest.later.paper, value: latest.matchedMeanAfter, raw: latest.matchedRawAfter, max: latest.max, unit: latest.unit, n: latest.matchedCount },
+      ]
+    : [];
+  return { pairs, latest, chart };
 }
 
 export function seriesDelta(series) {
