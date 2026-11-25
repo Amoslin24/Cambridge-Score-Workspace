@@ -2,6 +2,7 @@ import './analysis-practice-actions-1125.js';
 const truth = Number.isFinite;
 const fmt = v => truth(v) ? (Math.round(v*10)/10).toString() : '—';
 const levels = {A2:'ket',B1:'pet',B2:'fce',Starters:'starters',Movers:'movers',Flyers:'flyers'};
+const examLevels=['Starters','Movers','Flyers','A2','B1','B2'];
 const yle = x => ['Starters','Movers','Flyers'].includes(x);
 const areas = {reading:'阅读', readingWriting:'读写', listening:'听力', useOfEnglish:'语言运用', writing:'写作', speaking:'口语'};
 const kinds = {official:'正式',practice:'练习',classroom:'课堂'};
@@ -55,6 +56,7 @@ export function createAnalysis(React, d) {
  const options = (items, val, set, name) => h('label', {className:'cp-field'},name,h('select',{value:val,onChange:e=>set(e.target.value)},items.map(([k,t])=>h('option',{key:k,value:k},t))));
  const pill = (text,on,click) => h('button',{type:'button',key:text,className:'cp-tab','aria-pressed':on,onClick:click},text);
  const attemptOrder=(a,b)=>b.date.localeCompare(a.date)||String(b.id).localeCompare(String(a.id));
+ const levelOptions=examLevels.filter(id=>d.defs[id]).map(id=>[id,d.defs[id].label]);
  const detailLabel=a=> [a.date||'未填日期',d.defs[a.exam]?.label,kinds[a.kind],a.source].filter(Boolean).join(' · ');
  const grade=a=>a.status==='absent'?null: d.grade(a);
  function layout(row){
@@ -104,10 +106,16 @@ export function createAnalysis(React, d) {
  }
  function Student({student,attempts,allAttempts,students,Radar,Trend,onDetail}){
    const sorted=[...attempts].sort(attemptOrder);
-   const [key,setKey]=React.useState(''), [area,setArea]=React.useState(''), [threshold,setThreshold]=React.useState(60);
+   const [key,setKey]=React.useState(''), [lvl,setLevel]=React.useState(''), [area,setArea]=React.useState(''), [threshold,setThreshold]=React.useState(60);
    const [show,setShow]=React.useState(false), [selected,setSelected]=React.useState([]);
-   const row=sorted.find(a=>a.id===key)||sorted[0];
-   if(!row)return null;
+   const exam=lvl||sorted[0]?.exam||levelOptions[0][0];
+   const sittings=sorted.filter(a=>a.exam===exam);
+   const row=sittings.find(a=>a.id===key)||sittings[0];
+   const filter=options(levelOptions,exam,v=>{setLevel(v);setKey('');setArea('');setSelected([]);},'考试级别');
+   if(!row)return h(React.Fragment,null,h('section',{className:'cp-panel cp-student','aria-label':'学生数据分析'},
+     h('header',{className:'cp-head'},h('h3',null,'学生数据分析')),
+     h('div',{className:'cp-controls'},filter),h('p',{role:'status'},'该学生暂无 '+d.defs[exam].label+' 成绩。')),h(Trend,{attempts}));
+
    const scored=grade(row), curriculum=layout(row);
    const section=curriculum.find(x=>x.id===area)||curriculum[0];
    const parts=section?.parts.map(x=>({...x,value:percent(row,x)}))||[];
@@ -119,7 +127,8 @@ export function createAnalysis(React, d) {
    const picked=choices.filter(([id])=>selected.includes(id)).map(([id,name])=>[name,buckets.get(id)[0],id]);
    return h(React.Fragment,null,
     h('section',{className:'cp-panel cp-student','aria-label':'学生数据分析'},
-     h('header',{className:'cp-head'},h('h3',null,'学生数据分析'),options(sorted.map(a=>[a.id,detailLabel(a)]),row.id,v=>{setKey(v);setSelected([]);},'考试场次')),
+     h('header',{className:'cp-head'},h('h3',null,'学生数据分析')),
+     h('div',{className:'cp-controls'},filter,options(sittings.map(a=>[a.id,detailLabel(a)]),row.id,v=>{setKey(v);setSelected([]);},'考试场次')),
      h('div',{className:'cp-summary'},row.status==='absent'?h('p',null,'本场缺考'):h(React.Fragment,null,
        !yle(row.exam)&&truth(scored?.overall)&&h('div',{className:'cp-score'},h('span',null,(row.kind==='official'?'正式':'估算')+' Overall Scale'),h('strong',null,scored.overall)),
        ...((scored?.skills||[]).map(s=>{const value=yle(row.exam)?s.shields??s.estimatedShields:s.scale;const unit=yle(row.exam)?' 盾牌':' Scale';return h('div',{key:s.id,className:'cp-score'},h('span',null,areas[s.id]||s.label),h('strong',null,truth(value)?(row.kind==='official'?'':'≈ ')+value+unit:truth(s.raw)?s.raw+' / '+s.max:'—'));}))
@@ -142,7 +151,7 @@ export function createAnalysis(React, d) {
    const labels=new Set(students.map(s=>s.id));
    const {sessions,unassigned}=comparisonSessions(mode==='compare'?[...attempts].sort(attemptOrder).filter(a=>labels.has(a.studentId)&&d.defs[a.exam]):[],d.examKey,d.structure);
    const levelsFound=[...new Set([...sessions.values()].map(a=>a[0].exam))];
-   const exam=levelsFound.includes(lvl)?lvl:levelsFound[0]||'';
+   const exam=lvl||levelsFound[0]||levelOptions[0][0];
    const possible=[...sessions].filter(([,a])=>a[0].exam===exam);
    const session=possible.find(([k])=>k===which)||possible[0];
    const rows=session?.[1]||[], seed=rows.find(a=>a.status!=='absent')||rows[0];
@@ -163,10 +172,10 @@ export function createAnalysis(React, d) {
      h('div',{hidden:mode!=='home'},h(Native,{students,attempts,onDetail})),
      mode==='compare'&&h('section',{className:'cp-panel','aria-label':'班级成绩对比'},
        h('header',{className:'cp-head'},h('h2',null,'班级成绩对比')),
-       !seed?h('p',null,'暂无考试成绩。录入后可按考试级别、场次和考试时的归属比较。'):h(React.Fragment,null,
-       h('div',{className:'cp-controls'},options(levelsFound.map(x=>[x,d.defs[x].label]),exam,v=>{setLevel(v);setWhich('');setSelected(null);},'考试级别'),
-       options(possible.map(([k,a],i)=>[k,detailLabel(a[0])+(possible.filter(([,b])=>detailLabel(b[0])===detailLabel(a[0])).length>1?' · 记录组 '+(i+1):'')]),session[0],v=>{setWhich(v);setSelected(null);},'考试场次'),
-       options([['set','教学 SET'],['class','行政班']],group,v=>{setGroup(v);setSelected(null);},'比较维度')),
+       h('div',{className:'cp-controls'},options(levelOptions,exam,v=>{setLevel(v);setWhich('');setArea('');setSelected(null);},'考试级别'),
+       seed&&options(possible.map(([k,a],i)=>[k,detailLabel(a[0])+(possible.filter(([,b])=>detailLabel(b[0])===detailLabel(a[0])).length>1?' · 记录组 '+(i+1):'')]),session[0],v=>{setWhich(v);setSelected(null);},'考试场次'),
+       seed&&options([['set','教学 SET'],['class','行政班']],group,v=>{setGroup(v);setSelected(null);},'比较维度')),
+       !seed?h('p',{role:'status'},'暂无 '+d.defs[exam].label+' 成绩。录入后可按场次比较。'):h(React.Fragment,null,
        h('p',{className:'cp-muted'},'按考试时归属统计，只比同场同口径。有效人数按已登记且未缺考的学生计算。'),
        duplicateCount>0&&h('p',{className:'cp-muted'},'同场有重复成绩 '+duplicateCount+' 人，暂不纳入比较。'),
        unassigned.has(session[0])&&h('p',{className:'cp-muted'},'本场有多种计分口径，'+unassigned.get(session[0])+' 人的缺考记录不分配到单个记录组。'),
