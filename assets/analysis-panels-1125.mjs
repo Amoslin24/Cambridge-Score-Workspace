@@ -147,7 +147,7 @@ export function createAnalysis(React, d) {
     h(Trend,{attempts}));
  }
  function Class({students,attempts,Native,onDetail}){
-   const [mode,setMode]=React.useState('home'),[group,setGroup]=React.useState('set'),[lvl,setLevel]=React.useState(''),[which,setWhich]=React.useState(''),[area,setArea]=React.useState(''),[selected,setSelected]=React.useState(null),[threshold,setThreshold]=React.useState(60),[scope,setScope]=React.useState('recent'),[scheme,setScheme]=React.useState('');
+   const [mode,setMode]=React.useState('home'),[group,setGroup]=React.useState('set'),[lvl,setLevel]=React.useState(''),[which,setWhich]=React.useState(''),[area,setArea]=React.useState(''),[selected,setSelected]=React.useState(null),[threshold,setThreshold]=React.useState(60);
    const labels=new Set(students.map(s=>s.id));
    const relevant=mode==='compare'?[...attempts].sort(attemptOrder).filter(a=>labels.has(a.studentId)&&d.defs[a.exam]):[];
    const {sessions,unassigned}=comparisonSessions(relevant,d.examKey,d.structure);
@@ -155,7 +155,7 @@ export function createAnalysis(React, d) {
    const selectedRows=selected===null?relevant:relevant.filter(a=>selected.includes(groupName(a)));
    const exam=lvl||selectedRows[0]?.exam||relevant[0]?.exam||levelOptions[0][0];
    const possible=[...sessions].filter(([,a])=>a[0].exam===exam);
-   const same=scope==='same';
+   const same=!which.startsWith('recent:');
    const matches=selected===null?possible:possible.filter(([,a])=>a.some(x=>selected.includes(groupName(x))));
    const session=matches.find(([k])=>k===which)||matches[0];
    const scored=possible.filter(([,a])=>a.some(x=>x.status!=='absent'));
@@ -166,15 +166,15 @@ export function createAnalysis(React, d) {
      if(a.status!=='absent'&&(selected===null||selected.includes(name)))coverage.get(JSON.parse(key)[1]).add(name);
    }
    const defaultScheme=[...schemes].sort((a,b)=>coverage.get(b).size-coverage.get(a).size)[0];
-   const sig=schemes.includes(scheme)?scheme:defaultScheme||'';
+   const chosenScheme=same?'':which.slice('recent:'.length);
+   const sig=schemes.includes(chosenScheme)?chosenScheme:defaultScheme||'';
    const compatible=scored.filter(([k])=>JSON.parse(k)[1]===sig);
    const seedRows=(same?session:compatible[0])?.[1]||[];
    const seed=seedRows.find(a=>a.status!=='absent')||seedRows[0];
    const registered=students.map(a=>group==='set'?a.setName:a.className).filter(Boolean);
    const groupNames=[...new Set([...registered,...relevant.map(groupName)])].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
    const groupEntries=new Map(groupNames.map(n=>[n,same?(session?.[1].some(a=>groupName(a)===n)?session:null):compatible.find(([,a])=>a.some(x=>groupName(x)===n&&x.status!=='absent'))]));
-   const defaultGroups=groupNames.filter(n=>groupEntries.get(n));
-   const groups=selected===null?defaultGroups:groupNames.filter(n=>selected.includes(n));
+   const groups=selected===null?groupNames:groupNames.filter(n=>selected.includes(n));
    const groupsWithData=groups.filter(n=>groupEntries.get(n));
    const curriculum=seed?layout(seed):[];
    const section=area==='whole'?null:curriculum.find(x=>x.id===area)||curriculum[0];
@@ -202,30 +202,32 @@ export function createAnalysis(React, d) {
      const label={parts2024:'按 Part',items2024:'逐题录入',legacyV7:'旧版',totals:'科目总分',criteria:'评分维度',tasks:'写作任务总分','combined-reading-writing':'读写合并','legacy-separate-reading-writing':'读写分列'}[profile];
      return [kinds[kind],label,custom?.length?'自定义满分 '+custom.map(([k,v])=>k.replace(/_max$/,'')+' '+v).join(' / '):null].filter(Boolean).join(' · ');
    }
-   const levelsControl=options(levelOptions,exam,v=>{setLevel(v);setWhich('');setScheme('');setArea('');},'考试级别');
-   const scopeControl=options([['recent','各组最近成绩'],['same','同一场考试']],scope,v=>{setScope(v);setArea('');},'比较方式');
+   const levelsControl=options(levelOptions,exam,v=>{setLevel(v);setWhich('');setArea('');},'考试级别');
+   const optionLabels=matches.map(([,a])=>detailLabel(a.find(x=>x.status!=='absent')||a[0]));
+   const sittingOptions=matches.map(([k],i)=>[k,optionLabels[i]+(optionLabels.filter(v=>v===optionLabels[i]).length>1?' · 记录组 '+(i+1):'')]);
+   const recentOptions=groups.length>1?schemes.filter(id=>coverage.get(id).size>1).map(id=>['recent:'+id,'各组最近一场 · '+schemeLabel(id)]):[];
+   const selectedSitting=same?(session?.[0]||''):recentOptions.some(([k])=>k===which)?which:'';
+   const sittingControl=options(sittingOptions.length?[...sittingOptions,...recentOptions]:[['','暂无可选场次']],selectedSitting||sittingOptions[0]?.[0]||'',v=>{setWhich(v);setArea('');},'考试场次');
    const selectedStatus=groups.length===0?'请选择至少一个班级或 SET。':groupsWithData.length===0?'所选班级或 SET 暂无可比的 '+d.defs[exam].label+' 成绩。':null;
    return h(React.Fragment,null,
      h('div',{className:'cp-tabs cp-navigation','aria-label':'班级视图'},pill('班级成绩',mode==='home',()=>setMode('home')),pill('班级 / SET 对比',mode==='compare',()=>setMode('compare'))),
      h('div',{hidden:mode!=='home'},h(Native,{students,attempts,onDetail})),
      mode==='compare'&&h('section',{className:'cp-panel','aria-label':'班级成绩对比'},
        h('header',{className:'cp-head'},h('h2',null,'班级成绩对比')),
-       h('div',{className:'cp-controls'},options([['set','教学 SET'],['class','行政班']],group,v=>{setGroup(v);setSelected(null);},'分组')),
-       groupNames.length>0&&toggleGroups(groupNames.map(n=>[n,n+(groupEntries.get(n)?'':' · 暂无可比成绩')]),groups,setSelected,group==='set'?'选择 SET':'选择行政班',true),
-       h('div',{className:'cp-controls'},levelsControl,scopeControl),
-       same&&session&&options(matches.map(([k,a],i)=>[k,detailLabel(a[0])+(matches.filter(([,b])=>detailLabel(b[0])===detailLabel(a[0])).length>1?' · 记录组 '+(i+1):'')]),session[0],setWhich,'考试场次'),
-       !same&&schemes.length>1&&options(schemes.map(id=>[id,schemeLabel(id)]),sig,v=>{setScheme(v);setArea('');},'计分口径'),
+       h('div',{className:'cp-controls'},options([['set','教学 SET'],['class','行政班']],group,v=>{setGroup(v);setSelected(null);setWhich('');},'分组')),
+       groupNames.length>0&&toggleGroups(groupNames.map(n=>[n,n]),groups,v=>{setSelected(v);if(which.startsWith('recent:'))setWhich('');},group==='set'?'选择 SET':'选择行政班'),
+       h('div',{className:'cp-controls'},levelsControl,sittingControl),
        !seed?h('p',{role:'status'},same&&possible.length?(selectedStatus||'所选班级或 SET 暂无可比场次。'):'暂无 '+d.defs[exam].label+' 成绩。'):h(React.Fragment,null,
        same?h('p',{className:'cp-muted'},'按考试时归属统计；只比较同场同口径。'):h('p',{className:'cp-muted'},'各组选最近一场同计分口径的成绩。不同试卷难度可能不同，差距不等于水平差距。'),
        same&&recordsFor(session).duplicates>0&&h('p',{className:'cp-muted'},'同场有重复成绩 '+recordsFor(session).duplicates+' 人，暂不纳入比较。'),
        same&&unassigned.has(session[0])&&h('p',{className:'cp-muted'},'本场有多种计分口径，'+unassigned.get(session[0])+' 人的缺考记录不分配到单个记录组。'),
-       !same&&groupsWithData.length>0&&h('ul',{className:'cp-sources','aria-label':'各组试卷与日期'},groupsWithData.map(n=>{
-         const entry=groupEntries.get(n), note=groupRows.get(n), first=entry[1].find(a=>a.status!=='absent');
-         return h('li',{key:n},h('strong',null,n),h('span',null,detailLabel(first)+(note.duplicates?' · 已排除重复记录':'')+(unassigned.has(entry[0])?' · 有无法分配的缺考记录':'')));
-       })),
+       !same&&groupsWithData.length>0&&h('p',{className:'cp-muted'},groupsWithData.map(n=>{
+         const groupRecords=groupEntries.get(n)[1],first=groupRecords.find(a=>a.status!=='absent');
+         return n+'：'+detailLabel(first);
+       }).join('；')),
        curriculum.length>0&&h('div',{className:'cp-head'},h('div',{className:'cp-tabs','aria-label':'班级科目'},...curriculum.map(x=>pill(x.label,x.id===section?.id,()=>setArea(x.id))),pill('各科总览',!section,()=>setArea('whole'))),records.length>0&&line(threshold,setThreshold)),
        selectedStatus?h('p',{role:'status'},selectedStatus):h(React.Fragment,null,
-         groups.length>groupsWithData.length&&h('p',{className:'cp-muted'},'暂无可比成绩：'+groups.filter(n=>!groupEntries.get(n)).join('、')),
+         groups.length>groupsWithData.length&&h('p',{className:'cp-muted'},(groups.length-groupsWithData.length)+' 个已选分组无本次可比成绩。'),
          !curriculum.length&&h('p',{className:'cp-muted'},'仅显示已录入的科目成绩，不推算 Part。'),
          ...measures.map(m=>h('section',{key:m.id,className:'cp-compare-part'},h('h3',null,m.label),
             groupsWithData.map((g,i)=>{const s=byMetric.get(m.id).get(g);return h('div',{key:g},bar(g,s.mean,m.end||100,(truth(s.mean)?fmt(s.mean)+(m.unit||'%'):'未记录')+' · '+s.n+'/'+s.denominator+' 人',palette[i%palette.length]),
