@@ -27,6 +27,29 @@ export function summarize(rows, metric, threshold) {
  for(const num of counts.values())if(num>1)conflicts++;
  return {n,denominator,low,mean:n?total/n:null,conflicts,absent};
 }
+// A missing score has no scoring structure; match it by sitting, not score shape.
+export function comparisonSessions(rows, examKey, structure) {
+ const sittings=new Map(), sessions=new Map(), unassigned=new Map();
+ for(const row of rows){
+   const key=examKey(row);
+   if(!sittings.has(key))sittings.set(key,{scored:new Map(),absent:[]});
+   const sitting=sittings.get(key);
+   if(row.status==='absent'){sitting.absent.push(row);continue;}
+   const sig=structure(row);
+   if(!sitting.scored.has(sig))sitting.scored.set(sig,[]);
+   sitting.scored.get(sig).push(row);
+ }
+ for(const [key,{scored,absent}] of sittings){
+   if(scored.size===0){sessions.set(JSON.stringify([key,null]),absent);continue;}
+   const ambiguous=new Set(absent.map(row=>row.studentId)).size;
+   for(const [sig,recorded] of scored){
+     const id=JSON.stringify([key,sig]);
+     sessions.set(id,scored.size===1?[...recorded,...absent]:recorded);
+     if(scored.size>1&&ambiguous)unassigned.set(id,ambiguous);
+   }
+ }
+ return {sessions,unassigned};
+}
 export function createAnalysis(React, d) {
  const h=React.createElement;
  const options = (items, val, set, name) => h('label', {className:'cp-field'},name,h('select',{value:val,onChange:e=>set(e.target.value)},items.map(([k,t])=>h('option',{key:k,value:k},t))));
@@ -117,13 +140,7 @@ export function createAnalysis(React, d) {
  function Class({students,attempts,Native,onDetail}){
    const [mode,setMode]=React.useState('home'),[group,setGroup]=React.useState('set'),[lvl,setLevel]=React.useState(''),[which,setWhich]=React.useState(''),[area,setArea]=React.useState(''),[selected,setSelected]=React.useState(null),[threshold,setThreshold]=React.useState(60);
    const labels=new Set(students.map(s=>s.id));
-   const sessions=new Map();
-   if(mode==='compare')for(const a of [...attempts].sort(attemptOrder)){
-     if(!labels.has(a.studentId)||!d.defs[a.exam])continue;
-     const key=JSON.stringify([d.examKey(a),d.structure(a)]);
-     if(!sessions.has(key))sessions.set(key,[]);
-     sessions.get(key).push(a);
-   }
+   const {sessions,unassigned}=comparisonSessions(mode==='compare'?[...attempts].sort(attemptOrder).filter(a=>labels.has(a.studentId)&&d.defs[a.exam]):[],d.examKey,d.structure);
    const levelsFound=[...new Set([...sessions.values()].map(a=>a[0].exam))];
    const exam=levelsFound.includes(lvl)?lvl:levelsFound[0]||'';
    const possible=[...sessions].filter(([,a])=>a[0].exam===exam);
@@ -152,6 +169,7 @@ export function createAnalysis(React, d) {
        options([['set','教学 SET'],['class','行政班']],group,v=>{setGroup(v);setSelected(null);},'比较维度')),
        h('p',{className:'cp-muted'},'按考试时归属统计，只比同场同口径。有效人数按已登记且未缺考的学生计算。'),
        duplicateCount>0&&h('p',{className:'cp-muted'},'同场有重复成绩 '+duplicateCount+' 人，暂不纳入比较。'),
+       unassigned.has(session[0])&&h('p',{className:'cp-muted'},'本场有多种计分口径，'+unassigned.get(session[0])+' 人的缺考记录不分配到单个记录组。'),
        toggleGroups(groupNames.map(n=>[n,n]),groups,setSelected,group==='set'?'选择 SET':'选择行政班'),
        curriculum.length>0&&h('div',{className:'cp-head'},h('div',{className:'cp-tabs','aria-label':'班级科目'},...curriculum.map(x=>pill(x.label,x.id===section?.id,()=>setArea(x.id))),pill('各科总览',!section,()=>setArea('whole'))),records.length>0&&line(threshold,setThreshold)),
        groups.length===0?h('p',{role:'status'},'请选择至少一个班级或 SET。'):h(React.Fragment,null,
