@@ -81,21 +81,40 @@ export function createAnalysis(React, d) {
    return h('div',{key:title,className:'cp-bar'},h('div',{className:'cp-bar-label'},h('span',null,title),h('strong',null,detail)),h('div',{className:'cp-track','aria-hidden':true},truth(v)&&h('span',{style:{width:Math.min(100,100*v/end)+'%',background:color}})));
  }
  const palette=['#233c7b','#117c73','#86511b','#89496c','#574399','#356784'];
- function checklist(level,area,rows,threshold,group){
-   const selected=rows.filter(x=>truth(x.value)&&x.value<threshold).sort((a,b)=>a.value-b.value||a.part-b.part);
-   if(!rows.some(x=>truth(x.value)))return null;
-   return h('section',{className:'cp-queue'},h('h4',null,group?'优先复查':'练习与复查'),h('p',{className:'cp-muted'},selected.length?'低于 '+threshold+'% 的 Part，从低到高。先核对作答，再选练习。':'已录分项均未低于 '+threshold+'%。'),
-     selected.length>0&&h('ol',null,selected.map(x=>{
-       const action=(area==='listening'?globalThis.LISTENING_ACTIONS:globalThis.PART_ACTIONS)?.[levels[level]]?.[x.part];
-       return h('li',{key:x.id},h('div',{className:'cp-bar-label'},h('strong',null,x.label),h('b',null,fmt(x.value)+'%')),group&&h('small',null,'低于线 '+x.low+'/'+x.n+' 人'+(x.n<5?' · 有效样本少，先核对原卷':'')+(x.n<x.denominator?' · 录分未齐':'')),action&&h('p',null,h('b',null,'练习：'),action.practice),action&&h('p',null,h('b',null,'复查：'),action.check));
-     })));
+ const practiceOrder=(rows,threshold)=>rows.filter(x=>truth(x.value)&&x.value<threshold).sort((a,b)=>a.value-b.value||a.part-b.part);
+ const weakRate=(v,threshold)=> (v<threshold&&Number(fmt(v))>=threshold ? (Math.floor(v*10)/10).toFixed(1) : fmt(v))+'%';
+ function route(x){
+   if(x.n<5||x.n<.6*x.denominator)return '先核对原卷或补录';
+   return x.low>=x.denominator*2/3?'全班先做一道新题':'低于筛查线的学生先练';
  }
+ function checklist(level,area,rows,threshold,group){
+   const selected=practiceOrder(rows,threshold);
+   const valid=rows.filter(x=>truth(x.value));
+   if(!valid.length)return h('p',{role:'status'},'暂无已录 Part 成绩。');
+   const best=[...valid].sort((a,b)=>b.value-a.value||a.part-b.part)[0];
+   const lit=(term,value)=>h('div',null,h('dt',null,term),h('dd',null,value));
+   const incomplete=rows.filter(x=>group?x.n<x.denominator:!truth(x.value));
+   return h('section',{className:'cp-queue','aria-label':group?'优先复查':'下一步练习'},
+     h('header',{className:'cp-brief-head'},h('div',null,h('h4',null,group?'优先复查':'下一步练习'),h('p',null,selected.length?selected.length+' 个 Part 低于 '+threshold+'%，从低到高排列。':'已录分项均未低于 '+threshold+'%。')),
+       !group&&valid.length>1&&h('div',{className:'cp-strength'},h('span',null,'本场最高项'),h('strong',null,'Part '+best.part+' · '+fmt(best.value)+'%'))),
+     selected.length>0&&h('ol',{className:'cp-priorities'},selected.map((x,i)=>{
+       const action=(area==='listening'?globalThis.LISTENING_ACTIONS:globalThis.PART_ACTIONS)?.[levels[level]]?.[x.part];
+       const data=group?'平均 '+fmt(x.value*x.max/100)+' / '+x.max+' 分 · '+x.low+'/'+x.n+' 人低于线'+(x.n<x.denominator?' · 已录 '+x.n+'/'+x.denominator:''):
+         fmt(x.value*x.max/100)+' / '+x.max+' 分';
+       return h('li',{key:x.id},h('div',{className:'cp-priority-head'},h('span',{className:'cp-rank','aria-hidden':true},i+1),
+         h('div',{className:'cp-priority-name'},h('strong',null,x.label),h('small',null,data)),h('strong',{className:'cp-priority-value'},weakRate(x.value,threshold))),
+         group&&h('div',{className:'cp-route'},route(x)),
+         h('dl',{className:'cp-actions'},lit('怎么练',action?.practice||'选一道同题型新题，让学生说明作答依据。'),lit('怎么复查',action?.check||'换一道同题型题，不给提示，检查能否独立完成。')));
+     })),
+     incomplete.length>0&&h('p',{className:'cp-missing'},'未录齐：'+incomplete.map(x=>'Part '+x.part).join('、')+'。未录不算 0 分。'));
+ }
+ const fold=(name, ...content)=>h('details',{className:'cp-picks cp-evidence'},h('summary',null,name),...content);
  function toggleGroups(names, selected, set, legend, initiallyOpen=false){
    return h('details',{className:'cp-picks',open:initiallyOpen||undefined},h('summary',null,legend+'（已选 '+selected.length+' / '+names.length+'）'),
       h('div',{className:'cp-tabs'},h('button',{type:'button',className:'cp-tab',onClick:()=>set(names.map(([k])=>k))},'全选'),h('button',{type:'button',className:'cp-tab',onClick:()=>set([])},'清空')),
       h('div',{className:'cp-checks'},names.map(([key,text])=>h('label',{key},h('input',{type:'checkbox',checked:selected.includes(key),onChange:()=>set(selected.includes(key)?selected.filter(e=>e!==key):[...selected,key])}),text))));
  }
- const line=(value,set)=>options([40,50,60,70,80].map(n=>[n,n+'%']),value,v=>set(+v),'练习提醒线');
+ const line=(value,set)=>options([40,50,60,70,80].map(n=>[n,n+'%']),value,v=>set(+v),'筛查线');
  function metrics(row){
    const info=grade(row);
    return (info?.skills||d.defs[row.exam]?.skills||[]).map(s=>{
@@ -201,18 +220,17 @@ export function createAnalysis(React, d) {
     h('section',{className:'cp-panel cp-student','aria-label':'学生数据分析'},
      h('header',{className:'cp-head'},h('h3',null,'学生数据分析')),
      h('div',{className:'cp-controls'},filter,options(sittings.map(a=>[a.id,detailLabel(a)]),row.id,v=>{setKey(v);setSelected([]);},'考试场次')),
-     h('div',{className:'cp-summary'},row.status==='absent'?h('p',null,'本场缺考'):h(React.Fragment,null,
+     h('div',{className:'cp-scorecard'},h('div',{className:'cp-summary'},row.status==='absent'?h('p',null,'本场缺考'):h(React.Fragment,null,
        !yle(row.exam)&&truth(scored?.overall)&&h('div',{className:'cp-score'},h('span',null,(row.kind==='official'?'正式':'估算')+' Overall Scale'),h('strong',null,scored.overall)),
        ...((scored?.skills||[]).map(s=>{const value=yle(row.exam)?s.shields??s.estimatedShields:s.scale;const unit=yle(row.exam)?' 盾牌':' Scale';return h('div',{key:s.id,className:'cp-score'},h('span',null,areas[s.id]||s.label),h('strong',null,truth(value)?(row.kind==='official'?'':'≈ ')+value+unit:truth(s.raw)?s.raw+' / '+s.max:'—'));}))
      )),
-     h(Radar,{attempts:[row],hidePicker:true}),
-     h('div',{className:'cp-block'},h('h4',null,'各科表现'),progress.map(m=>bar(m.label,m.value,m.end,truth(m.value)?fmt(m.value)+m.unit:'未记录'))),
-     curriculum.length>0?h('div',{className:'cp-block'},h('header',{className:'cp-head'},h('h4',null,'各 Part 得分率'),line(threshold,setThreshold)),
+     h(Radar,{attempts:[row],hidePicker:true})),
+     curriculum.length>0?h('div',{className:'cp-block'},h('header',{className:'cp-head'},h('h4',null,'本场分项'),line(threshold,setThreshold)),
        h('div',{className:'cp-tabs','aria-label':'个人科目'},curriculum.map(x=>pill(x.label,x.id===section.id,()=>setArea(x.id)))),
-       parts.map(p=>bar(p.label,p.value,100,truth(p.value)?fmt(p.value)+'%':'未记录',p.value!==null&&p.value<threshold?'#8d552a':undefined)),
-       h('details',{className:'cp-picks'},h('summary',null,'Part 雷达图'),h(PartRadar,{parts})),
+       parts.map(p=>bar(p.label,p.value,100,truth(p.value)?fmt(p.value)+'%':'未记录',p.value!==null&&p.value<threshold?'#a14f38':undefined)),
        checklist(row.exam,section.id,parts,threshold,false),
-       h(PartHistory,{parts:section.parts,entries:partEntries})):h('p',{className:'cp-muted'},'本场无 Part 明细。不会用总分、Scale 或盾牌反推题目表现。'),
+       fold('查看 Part 雷达图',h(PartRadar,{parts})),
+       h(PartHistory,{parts:section.parts,entries:partEntries})):h('p',{className:'cp-muted'},'本场只录了科目成绩，无 Part 明细。'),
      h('div',{className:'cp-tabs'},pill('比较学生',show,()=>setShow(!show)),h('button',{type:'button',className:'cp-tab',onClick:()=>onDetail(row)},'查看原记录')),
      show&&h('section',{className:'cp-block','aria-label':'学生比较'},h('h4',null,'同场学生对比'),h('p',{className:'cp-muted'},'只比较同一场考试、同一计分口径。缺项不补零。'),
        choices.length?toggleGroups(choices,selected,setSelected,'选择学生'):h('p',null,'没有可比较的同场学生记录。'),
@@ -221,7 +239,7 @@ export function createAnalysis(React, d) {
     h(Trend,{attempts}));
  }
  function Class({students,attempts,Native,onDetail}){
-   const [mode,setMode]=React.useState('home'),[group,setGroup]=React.useState('set'),[lvl,setLevel]=React.useState(''),[which,setWhich]=React.useState(''),[area,setArea]=React.useState(''),[selected,setSelected]=React.useState(null),[threshold,setThreshold]=React.useState(60);
+   const [mode,setMode]=React.useState('compare'),[group,setGroup]=React.useState('set'),[lvl,setLevel]=React.useState(''),[which,setWhich]=React.useState(''),[area,setArea]=React.useState(''),[selected,setSelected]=React.useState(null),[threshold,setThreshold]=React.useState(60);
    const labels=new Set(students.map(s=>s.id));
    const relevant=mode==='compare'?[...attempts].sort(attemptOrder).filter(a=>labels.has(a.studentId)&&d.defs[a.exam]):[];
    const {sessions,unassigned}=comparisonSessions(relevant,d.examKey,d.structure);
@@ -270,7 +288,6 @@ export function createAnalysis(React, d) {
    const measures=records.length?records:whole;
    const measure=(a,m)=>records.length?percent(a,m):metrics(a).find(x=>x.id===m.id)?.value;
    const byMetric=new Map(measures.map(m=>[m.id,new Map(groupsWithData.map(n=>[n,summarize(groupRows.get(n).rows,a=>measure(a,m),records.length?threshold:-Infinity)]))]));
-   const overall=records.map(m=>{const {mean,...stats}=summarize(recordsFor(session).rows.filter(a=>groupsWithData.includes(groupName(a))),a=>percent(a,m),threshold);return {...m,...stats,value:mean};});
    function schemeLabel(id){
      const [,kind,profile,custom]=JSON.parse(id);
      const label={parts2024:'按 Part',items2024:'逐题录入',legacyV7:'旧版',totals:'科目总分',criteria:'评分维度',tasks:'写作任务总分','combined-reading-writing':'读写合并','legacy-separate-reading-writing':'读写分列'}[profile];
@@ -284,15 +301,14 @@ export function createAnalysis(React, d) {
    const sittingControl=options(sittingOptions.length?[...sittingOptions,...recentOptions]:[['','暂无可选场次']],selectedSitting||sittingOptions[0]?.[0]||'',v=>{setWhich(v);setArea('');},'考试场次');
    const selectedStatus=groups.length===0?'请选择至少一个班级或 SET。':groupsWithData.length===0?'所选班级或 SET 暂无可比的 '+d.defs[exam].label+' 成绩。':null;
    return h(React.Fragment,null,
-     h('div',{className:'cp-tabs cp-navigation','aria-label':'班级视图'},pill('班级成绩',mode==='home',()=>setMode('home')),pill('班级 / SET 对比',mode==='compare',()=>setMode('compare'))),
+     h('div',{className:'cp-tabs cp-navigation','aria-label':'班级视图'},pill('班级分析',mode==='compare',()=>setMode('compare')),pill('成绩明细',mode==='home',()=>setMode('home'))),
      h('div',{hidden:mode!=='home'},h(Native,{students,attempts,onDetail})),
-     mode==='compare'&&h('section',{className:'cp-panel','aria-label':'班级成绩对比'},
-       h('header',{className:'cp-head'},h('h2',null,'班级成绩对比')),
-       h('div',{className:'cp-controls'},options([['set','教学 SET'],['class','行政班']],group,v=>{setGroup(v);setSelected(null);setWhich('');},'分组')),
-       groupNames.length>0&&toggleGroups(groupNames.map(n=>[n,n]),groups,v=>{setSelected(v);if(which.startsWith('recent:'))setWhich('');},group==='set'?'选择 SET':'选择行政班'),
-       h('div',{className:'cp-controls'},levelsControl,sittingControl),
+     mode==='compare'&&h('section',{className:'cp-panel','aria-label':'班级分析'},
+       h('div',{className:'cp-class-controls'},h('div',{className:'cp-controls'},options([['set','教学 SET'],['class','行政班']],group,v=>{setGroup(v);setSelected(null);setWhich('');},'分组')),
+        h('div',{className:'cp-scope'},h('span',null,group==='set'?'教学 SET':'行政班'),groupNames.length>0?toggleGroups(groupNames.map(n=>[n,n]),groups,v=>{setSelected(v);if(which.startsWith('recent:'))setWhich('');},group==='set'?'选择 SET':'选择行政班'):h('p',null,'暂无分组')),
+        levelsControl,sittingControl),
        !seed?h('p',{role:'status'},same&&possible.length?(selectedStatus||'所选班级或 SET 暂无可比场次。'):'暂无 '+d.defs[exam].label+' 成绩。'):h(React.Fragment,null,
-       same?h('p',{className:'cp-muted'},'按考试时归属统计；只比较同场同口径。'):h('p',{className:'cp-muted'},'各组选最近一场同计分口径的成绩。不同试卷难度可能不同，差距不等于水平差距。'),
+       !same&&h('p',{className:'cp-muted'},'各组试卷可能不等难，分差不能直接视为水平差。'),
        same&&recordsFor(session).duplicates>0&&h('p',{className:'cp-muted'},'同场有重复成绩 '+recordsFor(session).duplicates+' 人，暂不纳入比较。'),
        same&&unassigned.has(session[0])&&h('p',{className:'cp-muted'},'本场有多种计分口径，'+unassigned.get(session[0])+' 人的缺考记录不分配到单个记录组。'),
        !same&&groupsWithData.length>0&&h('p',{className:'cp-muted'},groupsWithData.map(n=>{
@@ -303,12 +319,24 @@ export function createAnalysis(React, d) {
        selectedStatus?h('p',{role:'status'},selectedStatus):h(React.Fragment,null,
          groups.length>groupsWithData.length&&h('p',{className:'cp-muted'},(groups.length-groupsWithData.length)+' 个已选分组无本次可比成绩。'),
          !curriculum.length&&h('p',{className:'cp-muted'},'仅显示已录入的科目成绩，不推算 Part。'),
-         ...measures.map(m=>h('section',{key:m.id,className:'cp-compare-part'},h('h3',null,m.label),
-            groupsWithData.map((g,i)=>{const s=byMetric.get(m.id).get(g);return h('div',{key:g},bar(g,s.mean,m.end||100,(truth(s.mean)?fmt(s.mean)+(m.unit||'%'):'未记录')+' · '+s.n+'/'+s.denominator+' 人',palette[i%palette.length]),
-              (s.absent>0||(records.length>0&&s.low>0))&&h('small',{className:'cp-muted'},[s.low>0?'低于线 '+s.low+' 人':null,s.absent?'缺考 '+s.absent+' 人':null].filter(Boolean).join(' · ')));}))),
+         records.length>0&&(groupsWithData.length===1
+           ? checklist(exam,section.id,records.map(m=>{const z=byMetric.get(m.id).get(groupsWithData[0]);return {...m,...z,value:z.mean};}),threshold,true)
+           : h('section',{className:'cp-group-brief','aria-label':'各组优先复查'},h('h4',null,'各组优先复查'),
+               ...groupsWithData.map(g=>{
+                 const evidence=records.map(m=>{const z=byMetric.get(m.id).get(g);return {...m,...z,value:z.mean};});
+                 const priorities=practiceOrder(evidence,threshold);
+                 const status=priorities.length?'Part '+priorities[0].part+' '+weakRate(priorities[0].value,threshold)+(priorities.length>1?' · 共 '+priorities.length+' 项':''):
+                   evidence.some(x=>truth(x.value))?'无低于线分项':'暂无有效分项';
+                 return h('details',{key:g,className:'cp-group-evidence'},h('summary',null,h('strong',null,g),h('span',null,status)),checklist(exam,section.id,evidence,threshold,true));
+               }))),
+         h('section',{className:'cp-block cp-bars','aria-label':'各组得分对比'},h('h4',null,records.length?'Part 得分对比':'各科得分对比'),
+           ...measures.map(m=>h('section',{key:m.id,className:'cp-compare-part'},h('h3',null,m.label),
+             groupsWithData.map((g,i)=>{const z=byMetric.get(m.id).get(g);return h('div',{key:g},bar(g,z.mean,m.end||100,(truth(z.mean)?fmt(z.mean)+(m.unit||'%'):'未记录')+' · '+z.n+'/'+z.denominator+' 人',palette[i%palette.length]),
+               z.absent>0&&h('small',{className:'cp-muted'},'缺考 '+z.absent+' 人'));})))),
          records.length>0&&h(Distribution,{parts:records,groups:groupsWithData,readRows:n=>groupRows.get(n).rows,threshold}),
          records.length>0&&h(PartHistory,{parts:records,entries:same?scored.filter(([key])=>JSON.parse(key)[1]===d.structure(seed)):compatible,groupNames:groupsWithData,groupName}),
-         records.length>0&&(same?checklist(exam,section.id,overall,threshold,true):h('section',{className:'cp-block'},h('h4',null,'各组复查建议'),...groupsWithData.map(g=>h('details',{key:g,className:'cp-picks'},h('summary',null,g),checklist(exam,section.id,records.map(m=>{const s=byMetric.get(m.id).get(g);return {...m,...s,value:s.mean};}),threshold,true)||h('p',null,'暂无有效 Part 成绩。')))))))));
+         fold('统计口径',h('p',{className:'cp-muted'},'按考试时归属统计。均分只计已录，缺考不计入分母。筛查线用于安排复查，不是剑桥达标线。'))))));
+
  }
  return {Student,Class};
 }
